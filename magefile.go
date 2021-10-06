@@ -49,6 +49,12 @@ const (
 
 	// Container name of the local registry
 	registryContainer = "registry"
+
+	// podSubnet in case of conflict with local network settings
+	podSubnet = "10.244.0.0/16"
+
+	// serviceSubnet in case of conflict with local network settings
+	serviceSubnet = "10.96.0.0/16"
 )
 
 // Build a command that stops the build on if the command fails
@@ -392,9 +398,13 @@ func CreateKindCluster() {
 
 	var kindCfgContents bytes.Buffer
 	kindCfgData := struct {
-		Address string
+		Address       string
+		PodSubnet     string
+		ServiceSubnet string
 	}{
-		Address: ipAddress,
+		Address:       ipAddress,
+		PodSubnet:     podSubnet,
+		ServiceSubnet: serviceSubnet,
 	}
 	err = kindCfgTmpl.Execute(&kindCfgContents, kindCfgData)
 	err = ioutil.WriteFile("kind.config.yaml", kindCfgContents.Bytes(), 0644)

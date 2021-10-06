@@ -3,6 +3,8 @@ kind: "Cluster"
 # Commenting out because I can't connect when we set this
 networking:
   apiServerAddress: "{{.Address}}"
+  podSubnet: "{{.PodSubnet}}"
+  serviceSubnet: "{{.ServiceSubnet}}"
 containerdConfigPatches:
   - |-
     [plugins."io.containerd.grpc.v1.cri".registry.mirrors."localhost:5000"]
