@@ -118,6 +118,10 @@ func (r *InstallationReconciler) createJobForInstallation(ctx context.Context, j
 			},
 		},
 	}
+	// add installation labels to managed resources
+	for k, v := range inst.Labels {
+		pvc.ObjectMeta.Labels[k] = v
+	}
 	err = r.Create(ctx, pvc)
 	if err != nil {
 		return err
@@ -154,8 +158,9 @@ func (r *InstallationReconciler) createJobForInstallation(ctx context.Context, j
 
 	porterJob := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      jobName,
-			Namespace: inst.Namespace,
+			Name:        jobName,
+			Namespace:   inst.Namespace,
+			Annotations: map[string]string{},
 			Labels: map[string]string{
 				"porter":               "true",
 				"installation":         inst.Name,
@@ -221,7 +226,8 @@ func (r *InstallationReconciler) createJobForInstallation(ctx context.Context, j
 									Value: "true",
 								},
 								{
-									Name:  "LABELS",
+									Name: "LABELS",
+									//TODO: should all resource all resource labels be added to the env?
 									Value: fmt.Sprintf("porter=true installation=%s installation-version=%s", inst.Name, inst.ResourceVersion),
 								},
 								{
@@ -274,6 +280,12 @@ func (r *InstallationReconciler) createJobForInstallation(ctx context.Context, j
 				},
 			},
 		},
+	}
+
+	// add installation labels to managed resources
+	for k, v := range inst.Labels {
+		porterJob.ObjectMeta.Labels[k] = v
+		porterJob.Spec.Template.ObjectMeta.Labels[k] = v
 	}
 
 	err = r.Create(ctx, porterJob, &client.CreateOptions{})
