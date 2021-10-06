@@ -33,7 +33,7 @@ import (
 
 const (
 	// Version of KIND to install if not already present
-	kindVersion = "v0.10.0"
+	kindVersion = "v0.11.1"
 
 	// Name of the KIND cluster used for testing
 	kindClusterName = "porter"
