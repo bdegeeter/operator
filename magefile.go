@@ -1,5 +1,4 @@
 //go:build mage
-// +build mage
 
 // This is a magefile, and is a "makefile for go".
 // See https://magefile.org/
@@ -479,13 +478,13 @@ func Logs() {
 
 // Ensure operator-sdk is installed.
 func EnsureOperatorSDK() {
-	const version = "v1.3.0"
+	const version = "v1.19.0"
 
 	if runtime.GOOS == "windows" {
 		mgx.Must(errors.New("Sorry, OperatorSDK does not support Windows. In order to contribute to this repository, you will need to use WSL."))
 	}
 
-	url := "https://github.com/operator-framework/operator-sdk/releases/{{.VERSION}}/download/operator-sdk_{{.GOOS}}_{{.GOARCH}}"
+	url := "https://github.com/operator-framework/operator-sdk/releases/download/{{.VERSION}}/operator-sdk_{{.GOOS}}_{{.GOARCH}}"
 	mgx.Must(pkg.DownloadToGopathBin(url, "operator-sdk", version))
 }
 
