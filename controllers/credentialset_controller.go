@@ -127,6 +127,7 @@ func (r *CredentialSetReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	return ctrl.Result{}, nil
 }
 
+// TODO: Combine
 // isHandled determines if this generation of the credential set resource has been processed by Porter
 func (r *CredentialSetReconciler) isHandled(ctx context.Context, log logr.Logger, cs *porterv1.CredentialSet) (*porterv1.AgentAction, bool, error) {
 	labels := getActionLabels(cs)
@@ -145,6 +146,7 @@ func (r *CredentialSetReconciler) isHandled(ctx context.Context, log logr.Logger
 	return &action, true, nil
 }
 
+// TODO: Combine
 // Check the status of the porter-agent job and use that to update the AgentAction status
 func (r *CredentialSetReconciler) syncStatus(ctx context.Context, log logr.Logger, inst *porterv1.CredentialSet, action *porterv1.AgentAction) error {
 	origStatus := inst.Status
@@ -158,6 +160,7 @@ func (r *CredentialSetReconciler) syncStatus(ctx context.Context, log logr.Logge
 	return nil
 }
 
+// TODO: Combine
 // Only update the status with a PATCH, don't clobber the entire installation
 func (r *CredentialSetReconciler) saveStatus(ctx context.Context, log logr.Logger, inst *porterv1.CredentialSet) error {
 	log.V(Log5Trace).Info("Patching credential set status")
@@ -166,11 +169,13 @@ func (r *CredentialSetReconciler) saveStatus(ctx context.Context, log logr.Logge
 	})
 }
 
+// TODO: Maybe this could be an interface method?
 func (r *CredentialSetReconciler) shouldUninstall(cs *porterv1.CredentialSet) bool {
 	// ignore a deleted CRD with no finalizers
 	return isDeleted(cs) && isFinalizerSet(cs)
 }
 
+// TODO: Maybe make this "apply" and pass in a function for runPorter implementation?
 // Run the porter agent with the command `porter credentials apply`
 func (r *CredentialSetReconciler) applyCredentialSet(ctx context.Context, log logr.Logger, cs *porterv1.CredentialSet) error {
 	log.V(Log5Trace).Info("Initializing credential set status")
@@ -182,6 +187,7 @@ func (r *CredentialSetReconciler) applyCredentialSet(ctx context.Context, log lo
 	return r.runPorter(ctx, log, cs)
 }
 
+// TODO: Same as above
 // Flag the bundle as uninstalled, and then run the porter agent with the command `porter installation apply`
 func (r *CredentialSetReconciler) deleteCredentialSet(ctx context.Context, log logr.Logger, cs *porterv1.CredentialSet) error {
 	log.V(Log5Trace).Info("Initializing credential set status")
@@ -193,6 +199,7 @@ func (r *CredentialSetReconciler) deleteCredentialSet(ctx context.Context, log l
 	return r.runPorter(ctx, log, cs)
 }
 
+// This could be the main "runFunction for each controller"
 // Trigger an agent
 func (r *CredentialSetReconciler) runPorter(ctx context.Context, log logr.Logger, cs *porterv1.CredentialSet) error {
 	action, err := r.createAgentAction(ctx, log, cs)
@@ -204,6 +211,7 @@ func (r *CredentialSetReconciler) runPorter(ctx context.Context, log logr.Logger
 	return r.syncStatus(ctx, log, cs, action)
 }
 
+// TODO: Factory method under agent action?
 // create an AgentAction that will trigger running porter
 func (r *CredentialSetReconciler) createAgentAction(ctx context.Context, log logr.Logger, cs *porterv1.CredentialSet) (*porterv1.AgentAction, error) {
 	log.V(Log5Trace).Info("Creating porter agent action")
@@ -253,6 +261,7 @@ func (r *CredentialSetReconciler) createAgentAction(ctx context.Context, log log
 	return action, nil
 }
 
+// TODO: Combine
 // Sync the retry annotation from the credential set to the agent action to trigger another run.
 func (r *CredentialSetReconciler) retry(ctx context.Context, log logr.Logger, cs *porterv1.CredentialSet, action *porterv1.AgentAction) error {
 	log.V(Log5Trace).Info("Initializing installation status")

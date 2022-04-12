@@ -3,10 +3,9 @@ module get.porter.sh/operator
 go 1.17
 
 // Any replace  statements should be kept in sync with the ones in Porter's go.mod
-replace get.porter.sh/magefiles => github.com/carolynvs/magefiles v0.1.3-0.20220411165457-f27ca1e67a6b
 
 require (
-	get.porter.sh/magefiles v0.1.3
+	get.porter.sh/magefiles v0.2.0
 	get.porter.sh/porter v1.0.0-alpha.13
 	github.com/carolynvs/magex v0.8.0
 	github.com/go-logr/logr v1.2.2
