@@ -15,11 +15,11 @@ import (
 	"strings"
 	"time"
 
-	// mage:import
-	. "get.porter.sh/magefiles/tests"
-
-	"get.porter.sh/magefiles/docker"
+	. "get.porter.sh/magefiles/docker"
+	. "get.porter.sh/magefiles/porter"
 	"get.porter.sh/magefiles/releases"
+	. "get.porter.sh/magefiles/tests"
+	"get.porter.sh/magefiles/tools"
 	. "get.porter.sh/operator/mage"
 	"get.porter.sh/operator/mage/docs"
 	"get.porter.sh/porter/pkg/cnab"
@@ -33,6 +33,7 @@ import (
 	"github.com/magefile/mage/mg"
 	"github.com/pkg/errors"
 	"golang.org/x/sync/errgroup"
+	// mage:import
 )
 
 const (
@@ -47,16 +48,16 @@ const (
 
 	// Namespace of the porter operator
 	operatorNamespace = "porter-operator-system"
+
+	// Container name of the local registry
+	registryContainer = "registry"
+
+	// Porter home for running commands
+	porterVersion = "v1.0.0-alpha.13"
 )
 
 // Build a command that stops the build on if the command fails
 var must = shx.CommandBuilder{StopOnError: true}
-
-// Ensure mage is installed.
-func EnsureMage() error {
-	addGopathBinOnGithubActions()
-	return pkg.EnsureMage("v1.11.0")
-}
 
 // Add GOPATH/bin to the path on the GitHub Actions agent
 // TODO: Add to magex
@@ -69,6 +70,11 @@ func addGopathBinOnGithubActions() error {
 	log.Println("Adding GOPATH/bin to the PATH for the GitHub Actions Agent")
 	gopathBin := gopath.GetGopathBin()
 	return ioutil.WriteFile(githubPath, []byte(gopathBin), 0644)
+}
+
+// Ensure EnsureMage is installed and on the PATH.
+func EnsureMage() error {
+	return tools.EnsureMage()
 }
 
 func Fmt() {
@@ -101,7 +107,7 @@ func GenerateController() error {
 
 // Build the porter-operator bundle.
 func BuildBundle() {
-	mg.SerialDeps(getMixins, docker.StartDockerRegistry, PublishImages)
+	mg.SerialDeps(getMixins, StartDockerRegistry, PublishImages)
 
 	buildManifests()
 
@@ -146,6 +152,7 @@ func getMixins() error {
 	}{
 		{name: "helm3", url: "https://github.com/carolynvs/porter-helm3/releases/download", version: "v0.1.15-8-g864f450"},
 		{name: "kubernetes", feed: "https://cdn.porter.sh/mixins/atom.xml", version: "latest"},
+		{name: "exec", feed: "https://cdn.porter.sh/mixins/atom.xml", version: "latest"},
 	}
 	var errG errgroup.Group
 	for _, mixin := range mixins {
@@ -218,7 +225,7 @@ func resolveManagerImage() cnab.OCIReference {
 	if err != nil {
 		panic("the manager image has not been built yet")
 	}
-	imgWithDigest, err := docker.ExtractRepoDigest(imgDef)
+	imgWithDigest, err := ExtractRepoDigest(imgDef)
 	if err != nil {
 		panic("could not resolve the repository digest of the manager image")
 	}
@@ -412,7 +419,7 @@ func SetupNamespace(name string) {
 
 // Remove the test cluster and registry.
 func Clean() {
-	mg.Deps(DeleteTestCluster, docker.StopDockerRegistry)
+	mg.Deps(DeleteTestCluster, StopDockerRegistry)
 	os.RemoveAll("bin")
 }
 
@@ -537,7 +544,7 @@ func EnsureYq() {
 
 // Ensure ginkgo is installed.
 func EnsureGinkgo() {
-	mgx.Must(pkg.EnsurePackage("github.com/onsi/ginkgo/ginkgo", "", "v1.16.4"))
+	mgx.Must(pkg.EnsurePackage("github.com/onsi/ginkgo/ginkgo", "1.16.5", "version"))
 }
 
 // Ensure kustomize is installed.
@@ -564,8 +571,14 @@ func pwd() string {
 	return wd
 }
 
+func EnsureLocalPorter() {
+	mg.SerialDeps(UseBinForPorterHome)
+	EnsurePorterAt(porterVersion)
+}
+
 // Run porter using the local storage, not the in-cluster storage
 func porter(args ...string) shx.PreparedCommand {
-	return shx.Command("porter").Args(args...).
+	mg.Deps(EnsureLocalPorter)
+	return shx.Command(filepath.Join(GetPorterHome(), "porter")).Args(args...).
 		Env("PORTER_DEFAULT_STORAGE=", "PORTER_DEFAULT_STORAGE_PLUGIN=mongodb-docker")
 }
