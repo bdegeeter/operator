@@ -9,7 +9,7 @@ require (
 	get.porter.sh/porter v1.0.0-alpha.13
 	github.com/carolynvs/magex v0.8.0
 	github.com/go-logr/logr v1.2.2
-	github.com/magefile/mage v1.11.0
+	github.com/magefile/mage v1.13.0
 	github.com/mitchellh/mapstructure v1.4.1
 	github.com/onsi/ginkgo v1.16.5
 	github.com/onsi/gomega v1.17.0

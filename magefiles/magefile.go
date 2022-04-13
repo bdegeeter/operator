@@ -251,6 +251,11 @@ func UpdateTestfiles() {
 	TestUnit()
 }
 
+func TestOutline() {
+	must.Command("ginkgo", "-v", "-dryRun", "-tags=integration", "./tests/integration/...").
+		CollapseArgs().Env("ACK_GINKGO_DEPRECATIONS=1.16.5").RunV()
+}
+
 // Run integration tests against the test cluster.
 func TestIntegration() {
 	mg.Deps(UseTestEnvironment, CleanTestdata, EnsureGinkgo, EnsureDeployed)
