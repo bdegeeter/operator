@@ -39,6 +39,7 @@ var cfg *rest.Config
 var k8sClient client.Client
 var testEnv *envtest.Environment
 var testNamespace string
+var schemaVersion string
 
 func TestAPIs(t *testing.T) {
 	RegisterFailHandler(Fail)
@@ -87,6 +88,12 @@ var _ = BeforeSuite(func(done Done) {
 	}).SetupWithManager(k8sManager)
 	Expect(err).ToNot(HaveOccurred())
 
+	err = (&controllers.CredentialSetReconciler{
+		Client: k8sManager.GetClient(),
+		Log:    ctrl.Log.WithName("controllers").WithName("CredentialSet"),
+	}).SetupWithManager(k8sManager)
+	Expect(err).ToNot(HaveOccurred())
+
 	err = (&controllers.AgentActionReconciler{
 		Client: k8sManager.GetClient(),
 		Log:    ctrl.Log.WithName("controllers").WithName("AgentAction"),
@@ -112,6 +119,7 @@ var _ = AfterSuite(func() {
 
 var _ = BeforeEach(func() {
 	testNamespace = createTestNamespace(context.Background())
+	schemaVersion = "1.0.1"
 }, 5)
 
 var _ = AfterEach(func() {
@@ -124,7 +132,7 @@ var _ = AfterEach(func() {
 func createTestNamespace(ctx context.Context) string {
 	ns := &v1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
-			GenerateName: "ginkgo-tests",
+			GenerateName: "ginkgo-tests-",
 			Labels: map[string]string{
 				"porter.sh/testdata": "true",
 			},

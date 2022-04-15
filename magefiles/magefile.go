@@ -273,7 +273,7 @@ func TestIntegration() {
 		v = "-v"
 	}
 	must.Command("go", "test", v, "-tags=integration", "./tests/integration/...", "-coverprofile=coverage-integration.out", "-args", "-ginkgo.v").
-		CollapseArgs().RunV()
+		CollapseArgs().Env("ACK_GINKGO_DEPRECATIONS=1.16.5").RunV()
 }
 
 // Check if the operator is deployed to the test cluster.
@@ -443,7 +443,7 @@ func CleanTestdata() {
 				continue
 			}
 
-			output, _ = kubectl("get", "installation,agentaction", "-n", namespace, `--template={{range .items}}{{.kind}}/{{.metadata.name}},{{end}}`).
+			output, _ = kubectl("get", "installation,credentialset,agentaction", "-n", namespace, `--template={{range .items}}{{.kind}}/{{.metadata.name}},{{end}}`).
 				Output()
 			resources := strings.Split(output, ",")
 			for _, resource := range resources {
@@ -464,14 +464,8 @@ func CleanTestdata() {
 // name should be in the format: kind/name
 func removeFinalizers(namespace, name string) {
 	// Get the resource definition
-	resource, _ := kubectl("get", name, "-n", namespace, "-o=yaml").Output()
-
-	// Use yq to remove the finalizers
-	resource, _ = must.Command("yq", "eval", ".metadata.finalizers = null").
-		Stdin(strings.NewReader(resource)).Output()
-
-	// Update the resource
-	kubectl("apply", "-f", "-").Stdin(strings.NewReader(resource)).Run()
+	kubectl("patch", "-n", namespace, name, "-p", `[{"op": "remove", "path": "/metadata/finalizers"}]`, "--type=json").Must(false).RunV()
+	time.Sleep(time.Second * 6)
 }
 
 // Remove any porter data in the cluster
