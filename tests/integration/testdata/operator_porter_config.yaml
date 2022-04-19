@@ -1,3 +1,4 @@
+#TODO: remove this file
 debug: true
 debug-plugins: true
 default-secrets: "kubernetes-secrets"

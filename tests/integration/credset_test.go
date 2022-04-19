@@ -43,40 +43,6 @@ var _ = Describe("CredSet create", func() {
 			})
 		})
 	})
-	Context("when a new CredentialSet resource is created with value source", func() {
-		It("should run porter", func() {
-			By("creating an agent action", func() {
-				ctx := context.Background()
-				ns := createTestNamespace(ctx)
-				Log("create a credential set with value source")
-				name := "test-cs-" + ns
-				cs := NewTestCredSet(name)
-				cs.GenerateName = ""
-				cs.Name = name
-				cs.ObjectMeta.Namespace = ns
-				cred := porterv1.Credential{
-					Name: "insecureValue",
-					Source: porterv1.CredentialSource{
-						Secret: "secret-name",
-					},
-				}
-				Log("install porter-test-me bundle with new credset")
-				cs.Spec.Credentials = append(cs.Spec.Credentials, cred)
-				Expect(k8sClient.Create(ctx, cs)).Should(Succeed())
-				Expect(waitForPorterCS(ctx, cs, "waiting for credential set to apply")).Should(Succeed())
-				validateCredSetConditions(cs)
-				inst := NewTestInstallation("cs-with-secret")
-				inst.ObjectMeta.Namespace = ns
-				inst.Spec.CredentialSets = append(inst.Spec.CredentialSets, name)
-				inst.Spec.SchemaVersion = "1.0.0"
-				Expect(k8sClient.Create(ctx, inst)).Should(Succeed())
-				Expect(waitForPorter(ctx, inst, "waiting for porter-test-me to install")).Should(Succeed())
-				validateInstallationConditions(inst)
-
-			})
-		})
-	})
-
 })
 var _ = PDescribe("CredSet update", func() {
 	Context("when a new CredentialSet resource is updated", func() {

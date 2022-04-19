@@ -496,7 +496,7 @@ func SetupNamespace(name string) {
 		ps = "-p=dev-build"
 	}
 
-	porter("invoke", "operator", "--action=configureNamespace", ps, "--param", "namespace="+name, "--param", "porterConfig="+porterConfigFile, "-c", "kind", "-n=operator").
+	porter("invoke", "operator", "--action=configureNamespace", ps, "--param", "pullPolicy=Always", "--param", "namespace="+name, "--param", "porterConfig="+porterConfigFile, "-c", "kind", "-n=operator").
 		CollapseArgs().Must().RunV()
 	kubectl("label", "namespace", name, "--overwrite=true", "porter.sh/devenv=true").Must().RunV()
 

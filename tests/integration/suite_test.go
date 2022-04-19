@@ -12,7 +12,6 @@ import (
 	. "github.com/onsi/gomega"
 	v1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -194,6 +193,7 @@ func createTestNamespace(ctx context.Context) string {
 			Namespace: ns.Name,
 		},
 		Spec: porterv1.AgentConfigSpec{
+			PullPolicy:                 v1.PullAlways,
 			PorterRepository:           agentRepo,
 			PorterVersion:              agentVersion,
 			ServiceAccount:             svc.Name,
@@ -203,38 +203,4 @@ func createTestNamespace(ctx context.Context) string {
 	Expect(k8sClient.Create(ctx, agentCfg)).To(Succeed())
 
 	return ns.Name
-}
-
-//TODO: delete this: handled by mage cleantestdata
-func deleteTestNamespaces(name string) {
-	// find all test namespaces
-	ctx := context.Background()
-	nsList := &v1.NamespaceList{}
-	mLabels := client.MatchingLabels{}
-	mLabels["porter.sh/testdata"] = "true"
-	listOpts := &client.ListOptions{}
-	mLabels.ApplyToList(listOpts)
-	_ = k8sClient.List(ctx, nsList, listOpts)
-	/*
-		output, _ := kubectl("get", "ns", "-l", "porter.sh/testdata=true", `--template={{range .items}}{{.metadata.name}},{{end}}`).
-			OutputE()
-		namespaces := strings.Split(output, ",")
-	*/
-
-	// Remove the finalizers from any testdata in that namespace
-	// Otherwise they will block when you delete the namespace
-	for _, ns := range nsList.Items {
-		//kubectl("patch", "-n", ns, resource, "-p", `[{"op": "remove", "path": "/metadata/finalizers"}]`, "--type=json").Must(false).RunV()
-		// Delete the test namespace
-		var background = metav1.DeletePropagationBackground
-		err := k8sClient.Delete(context.Background(), &ns, &client.DeleteOptions{
-			GracePeriodSeconds: pointer.Int64Ptr(0),
-			PropagationPolicy:  &background,
-		})
-		if apierrors.IsNotFound(err) {
-			return
-		}
-		Expect(err).NotTo(HaveOccurred())
-
-	}
 }
