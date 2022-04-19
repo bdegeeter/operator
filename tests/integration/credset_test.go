@@ -4,12 +4,14 @@ package integration_test
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/carolynvs/magex/shx"
 	. "github.com/onsi/ginkgo"
 	"github.com/pkg/errors"
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -25,20 +27,46 @@ var _ = Describe("CredSet create", func() {
 			By("creating an agent action", func() {
 				ctx := context.Background()
 				ns := createTestNamespace(ctx)
-				Log("create a credential set with secret source")
 				name := "test-cs-" + ns
+				testSecret := "foo"
+
+				Log(fmt.Sprintf("create k8s secret '%s' for credset", name))
+
+				csSecret := &corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      name,
+						Namespace: ns,
+					},
+					Type:       corev1.SecretTypeOpaque,
+					StringData: map[string]string{"value": testSecret},
+				}
+				Expect(k8sClient.Create(ctx, csSecret)).Should(Succeed())
+
+				Log(fmt.Sprintf("create credential set '%s' for credset", name))
 				cs := NewTestCredSet(name)
 				cs.ObjectMeta.Namespace = ns
 				cred := porterv1.Credential{
 					Name: "insecureValue",
 					Source: porterv1.CredentialSource{
-						Secret: "k8s-secret-name",
+						Secret: name,
 					},
 				}
 				cs.Spec.Credentials = append(cs.Spec.Credentials, cred)
+				cs.Spec.Namespace = ns
+
 				Expect(k8sClient.Create(ctx, cs)).Should(Succeed())
 				Expect(waitForPorterCS(ctx, cs, "waiting for credential set to apply")).Should(Succeed())
 				validateCredSetConditions(cs)
+
+				Log("install porter-test-me bundle with new credset")
+				inst := NewTestInstallation("cs-with-secret")
+				inst.ObjectMeta.Namespace = ns
+				inst.Spec.Namespace = ns
+				inst.Spec.CredentialSets = append(inst.Spec.CredentialSets, name)
+				inst.Spec.SchemaVersion = "1.0.0"
+				Expect(k8sClient.Create(ctx, inst)).Should(Succeed())
+				Expect(waitForPorter(ctx, inst, "waiting for porter-test-me to install")).Should(Succeed())
+				validateInstallationConditions(inst)
 
 			})
 		})
