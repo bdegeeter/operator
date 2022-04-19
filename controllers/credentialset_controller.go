@@ -6,7 +6,6 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
-	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -62,7 +61,8 @@ func (r *CredentialSetReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	log.V(Log5Trace).Info("Reconciling credential set")
 
 	// Check if we have requested an agent run yet
-	action, handled, err := r.isHandled(ctx, log, cs)
+	//action, handled, err := r.isHandled(ctx, log, cs)
+	action, handled, err := isHandled(ctx, log, r.Client, cs)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -87,7 +87,8 @@ func (r *CredentialSetReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if handled {
 		// Check if retry was requested
 		if action.GetRetryLabelValue() != cs.GetRetryLabelValue() {
-			err = r.retry(ctx, log, cs, action)
+			//err = r.retry(ctx, log, cs, action)
+			err = retry(ctx, log, cs, r.Client, action, r.statusFunc)
 			log.V(Log4Debug).Info("Reconciliation complete: The associated porter agent action was retried.")
 			return ctrl.Result{}, err
 		}
@@ -98,7 +99,7 @@ func (r *CredentialSetReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	// Should we delete the credential
-	if r.shouldUninstall(cs) {
+	if shouldUninstall(cs) {
 		err = r.deleteCredentialSet(ctx, log, cs)
 		log.V(Log4Debug).Info("Reconciliation complete: A porter agent has been dispatched to delete the credential set")
 		return ctrl.Result{}, err
@@ -129,6 +130,7 @@ func (r *CredentialSetReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 // TODO: Combine
 // isHandled determines if this generation of the credential set resource has been processed by Porter
+/*
 func (r *CredentialSetReconciler) isHandled(ctx context.Context, log logr.Logger, cs *porterv1.CredentialSet) (*porterv1.AgentAction, bool, error) {
 	labels := getActionLabels(cs)
 	results := porterv1.AgentActionList{}
@@ -144,36 +146,41 @@ func (r *CredentialSetReconciler) isHandled(ctx context.Context, log logr.Logger
 	action := results.Items[0]
 	log.V(Log4Debug).Info("Found existing agent action", "agentaction", action.Name, "namespace", action.Namespace)
 	return &action, true, nil
-}
+}*/
 
 // TODO: Combine
 // Check the status of the porter-agent job and use that to update the AgentAction status
-func (r *CredentialSetReconciler) syncStatus(ctx context.Context, log logr.Logger, inst *porterv1.CredentialSet, action *porterv1.AgentAction) error {
-	origStatus := inst.Status
+func (r *CredentialSetReconciler) syncStatus(ctx context.Context, log logr.Logger, cs *porterv1.CredentialSet, action *porterv1.AgentAction) error {
+	origStatus := cs.Status
 
-	applyAgentAction(log, inst, action)
+	applyAgentAction(log, cs, action)
 
-	if !reflect.DeepEqual(origStatus, inst.Status) {
-		return r.saveStatus(ctx, log, inst)
+	if !reflect.DeepEqual(origStatus, cs.Status) {
+		return r.saveStatus(ctx, log, cs)
 	}
 
 	return nil
 }
+func (r *CredentialSetReconciler) newObj() client.Object {
+	return &porterv1.CredentialSet{}
+}
 
 // TODO: Combine
-// Only update the status with a PATCH, don't clobber the entire installation
-func (r *CredentialSetReconciler) saveStatus(ctx context.Context, log logr.Logger, inst *porterv1.CredentialSet) error {
-	log.V(Log5Trace).Info("Patching credential set status")
-	return PatchObjectWithRetry(ctx, log, r.Client, r.Client.Status().Patch, inst, func() client.Object {
-		return &porterv1.CredentialSet{}
-	})
+// Only update the status with a PATCH, don't clobber the entire credential set
+func (r *CredentialSetReconciler) saveStatus(ctx context.Context, log logr.Logger, cs *porterv1.CredentialSet) error {
+	return saveStatus(ctx, log, cs, r.Client, r.newObj)
+	// log.V(Log5Trace).Info("Patching credential set status")
+	// return PatchObjectWithRetry(ctx, log, r.Client, r.Client.Status().Patch, cs, func() client.Object {
+	// 	return &porterv1.CredentialSet{}
+	// })
 }
 
 // TODO: Maybe this could be an interface method?
+/*
 func (r *CredentialSetReconciler) shouldUninstall(cs *porterv1.CredentialSet) bool {
 	// ignore a deleted CRD with no finalizers
 	return isDeleted(cs) && isFinalizerSet(cs)
-}
+}*/
 
 // TODO: Maybe make this "apply" and pass in a function for runPorter implementation?
 // Run the porter agent with the command `porter credentials apply`
@@ -263,6 +270,7 @@ func (r *CredentialSetReconciler) createAgentAction(ctx context.Context, log log
 
 // TODO: Combine
 // Sync the retry annotation from the credential set to the agent action to trigger another run.
+/*
 func (r *CredentialSetReconciler) retry(ctx context.Context, log logr.Logger, cs *porterv1.CredentialSet, action *porterv1.AgentAction) error {
 	log.V(Log5Trace).Info("Initializing installation status")
 	cs.Status.Initialize()
@@ -280,4 +288,4 @@ func (r *CredentialSetReconciler) retry(ctx context.Context, log logr.Logger, cs
 
 	log.V(Log4Debug).Info("Retried associated porter agent action", "name", "retry", action.Name, retry)
 	return nil
-}
+}*/

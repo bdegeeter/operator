@@ -66,7 +66,8 @@ func (r *InstallationReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	log.V(Log5Trace).Info("Reconciling installation")
 
 	// Check if we have requested an agent run yet
-	action, handled, err := r.isHandled(ctx, log, inst)
+	//action, handled, err := r.isHandled(ctx, log, inst)
+	action, handled, err := isHandled(ctx, log, r.Client, inst)
 	if err != nil {
 		return ctrl.Result{}, err
 	}

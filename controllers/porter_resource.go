@@ -23,6 +23,7 @@ import (
 type porterResource interface {
 	client.Object
 	GetStatus() porterv1.PorterResourceStatus
+	GetRetryLabelValue() string
 	SetStatus(value porterv1.PorterResourceStatus)
 }
 
@@ -96,6 +97,52 @@ func isDeleted(resource porterResource) bool {
 func isDeleteProcessed(resource porterResource) bool {
 	status := resource.GetStatus()
 	return isDeleted(resource) && apimeta.IsStatusConditionTrue(status.Conditions, string(porterv1.ConditionComplete))
+}
+
+func isHandled(ctx context.Context, log logr.Logger, obj client.Client, resource porterResource) (*porterv1.AgentAction, bool, error) {
+	labels := getActionLabels(resource)
+	results := porterv1.AgentActionList{}
+	err := obj.List(ctx, &results, client.InNamespace(resource.GetNamespace()), client.MatchingLabels(labels))
+	if err != nil {
+		return nil, false, errors.Wrapf(err, "could not query for the current agent action")
+	}
+
+	if len(results.Items) == 0 {
+		log.V(Log4Debug).Info("No existing agent action was found")
+		return nil, false, nil
+	}
+	action := results.Items[0]
+	log.V(Log4Debug).Info("Found existing agent action", "agentaction", action.Name, "namespace", action.Namespace)
+	return &action, true, nil
+}
+
+func saveStatus(ctx context.Context, log logr.Logger, resource porterResource, client client.Client, f func() client.Object) error {
+	log.V(Log5Trace).Info("Patching credential set status")
+	return PatchObjectWithRetry(ctx, log, client, client.Status().Patch, resource, f)
+}
+
+func retry(ctx context.Context, log logr.Logger, resource porterResource, c client.Client, action *porterv1.AgentAction, newObj func() client.Object) error {
+	log.V(Log5Trace).Info("Initializing installation status")
+	status := resource.GetStatus()
+	status.Initialize()
+	status.Action = &corev1.LocalObjectReference{Name: action.Name}
+	if err := saveStatus(ctx, log, resource, c, newObj); err != nil {
+		return err
+	}
+
+	log.V(Log5Trace).Info("Retrying associated porter agent action")
+	retry := resource.GetRetryLabelValue()
+	action.SetRetryAnnotation(retry)
+	if err := c.Update(ctx, action); err != nil {
+		return errors.Wrap(err, "error updating the associated porter agent action")
+	}
+
+	log.V(Log4Debug).Info("Retried associated porter agent action", "name", "retry", action.Name, retry)
+	return nil
+}
+
+func shouldUninstall(resource porterResource) bool {
+	return isDeleted(resource) && isFinalizerSet(resource)
 }
 
 func isFinalizerSet(resource porterResource) bool {
