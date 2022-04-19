@@ -20,15 +20,17 @@ import (
 )
 
 var _ = Describe("CredSet create", func() {
-	Context("when a new CredentialSet resource is created", func() {
+	Context("when a new CredentialSet resource is created with secret source", func() {
 		It("should run porter", func() {
 			By("creating an agent action", func() {
 				ctx := context.Background()
-				Log("create a credential set")
-				name := "foo"
+				ns := createTestNamespace(ctx)
+				Log("create a credential set with secret source")
+				name := "test-cs-" + ns
 				cs := NewTestCredSet(name)
+				cs.ObjectMeta.Namespace = ns
 				cred := porterv1.Credential{
-					Name: "test-cred",
+					Name: "insecureValue",
 					Source: porterv1.CredentialSource{
 						Secret: "k8s-secret-name",
 					},
@@ -65,7 +67,6 @@ func NewTestCredSet(csName string) *porterv1.CredentialSet {
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: "porter-test-me-",
-			Namespace:    testNamespace,
 		},
 		Spec: porterv1.CredentialSetSpec{
 			//TODO: get schema version from porter version?
@@ -74,6 +75,27 @@ func NewTestCredSet(csName string) *porterv1.CredentialSet {
 		},
 	}
 	return cs
+}
+
+func NewTestInstallation(iName string) *porterv1.Installation {
+	inst := &porterv1.Installation{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "porter.sh/v1",
+			Kind:       "Installation",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "porter-test-me-",
+		},
+		Spec: porterv1.InstallationSpec{
+			SchemaVersion: schemaVersion,
+			Name:          iName,
+			Bundle: porterv1.OCIReferenceParts{
+				Repository: "ghcr.io/bdegeeter/porter-test-me",
+				Version:    "0.2.0",
+			},
+		},
+	}
+	return inst
 }
 
 func waitForPorterCS(ctx context.Context, cs *porterv1.CredentialSet, msg string) error {

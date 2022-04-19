@@ -32,6 +32,7 @@ var _ = Describe("Installation Lifecycle", func() {
 		It("Should run porter", func() {
 			By("By creating an agent action")
 			ctx := context.Background()
+			ns := createTestNamespace(ctx)
 
 			Log("create an installation")
 			inst := &porterv1.Installation{
@@ -41,7 +42,7 @@ var _ = Describe("Installation Lifecycle", func() {
 				},
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "porter-hello",
-					Namespace: testNamespace,
+					Namespace: ns,
 				},
 				Spec: porterv1.InstallationSpec{
 					SchemaVersion: "1.0.0",
