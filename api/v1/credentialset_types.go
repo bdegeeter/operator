@@ -32,6 +32,10 @@ type CredentialSource struct {
 
 	//FilePath is a credential source using a file path (and configmap)
 	FilePath string `json:"file,omitempty" yaml:"file,omitempty"`
+
+	//TODO: git rid of value just testing some stuff
+	//Value is a credential source using a value
+	Value string `json:"value,omitempty" yaml:"value,omitempty"`
 }
 
 // CredentialSetSpec defines the desired state of CredentialSet

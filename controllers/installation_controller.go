@@ -225,7 +225,8 @@ func (r *InstallationReconciler) createAgentAction(ctx context.Context, log logr
 		Spec: porterv1.AgentActionSpec{
 			AgentConfig:  inst.Spec.AgentConfig,
 			PorterConfig: inst.Spec.PorterConfig,
-			Args:         []string{"installation", "apply", "installation.yaml"},
+			//Command:      []string{"/app/.porter/porter plugins install kubernetes && /app/.porter/porter"},
+			Args: []string{"installation", "apply", "installation.yaml"},
 			Files: map[string][]byte{
 				"installation.yaml": installationResourceB,
 			},

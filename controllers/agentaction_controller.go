@@ -497,6 +497,9 @@ func (r *AgentActionReconciler) resolvePorterConfig(ctx context.Context, log log
 
 	// Provide a safe default config in case nothing is defined anywhere
 	defaultCfg := porterv1.PorterConfigSpec{
+		//TODO: add debug to integration tests
+		Debug:                pointer.Bool(true),
+		DebugPlugins:         pointer.Bool(true),
 		DefaultStorage:       pointer.StringPtr("in-cluster-mongodb"),
 		DefaultSecretsPlugin: pointer.StringPtr("kubernetes.secrets"),
 		Storage: []porterv1.StorageConfig{

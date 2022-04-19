@@ -38,7 +38,6 @@ import (
 var cfg *rest.Config
 var k8sClient client.Client
 var testEnv *envtest.Environment
-var testNamespace string
 var schemaVersion string
 
 func TestAPIs(t *testing.T) {
@@ -118,7 +117,6 @@ var _ = AfterSuite(func() {
 })
 
 var _ = BeforeEach(func() {
-	testNamespace = createTestNamespace(context.Background())
 	schemaVersion = "1.0.1"
 }, 5)
 
@@ -126,7 +124,8 @@ var _ = AfterEach(func() {
 	if _, ok := os.LookupEnv("KEEP_TESTS"); ok {
 		return
 	}
-	deleteNamespace(testNamespace)
+	//TODO: don't reuse namespace for all tests move this to suite/magefile cleanup
+	//deleteNamespace(testNamespace)
 }, 5)
 
 func createTestNamespace(ctx context.Context) string {
@@ -206,20 +205,36 @@ func createTestNamespace(ctx context.Context) string {
 	return ns.Name
 }
 
-func deleteNamespace(name string) {
-	// Delete the test namespace
-	ns := &v1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: name,
-		},
+//TODO: delete this: handled by mage cleantestdata
+func deleteTestNamespaces(name string) {
+	// find all test namespaces
+	ctx := context.Background()
+	nsList := &v1.NamespaceList{}
+	mLabels := client.MatchingLabels{}
+	mLabels["porter.sh/testdata"] = "true"
+	listOpts := &client.ListOptions{}
+	mLabels.ApplyToList(listOpts)
+	_ = k8sClient.List(ctx, nsList, listOpts)
+	/*
+		output, _ := kubectl("get", "ns", "-l", "porter.sh/testdata=true", `--template={{range .items}}{{.metadata.name}},{{end}}`).
+			OutputE()
+		namespaces := strings.Split(output, ",")
+	*/
+
+	// Remove the finalizers from any testdata in that namespace
+	// Otherwise they will block when you delete the namespace
+	for _, ns := range nsList.Items {
+		//kubectl("patch", "-n", ns, resource, "-p", `[{"op": "remove", "path": "/metadata/finalizers"}]`, "--type=json").Must(false).RunV()
+		// Delete the test namespace
+		var background = metav1.DeletePropagationBackground
+		err := k8sClient.Delete(context.Background(), &ns, &client.DeleteOptions{
+			GracePeriodSeconds: pointer.Int64Ptr(0),
+			PropagationPolicy:  &background,
+		})
+		if apierrors.IsNotFound(err) {
+			return
+		}
+		Expect(err).NotTo(HaveOccurred())
+
 	}
-	var background = metav1.DeletePropagationBackground
-	err := k8sClient.Delete(context.Background(), ns, &client.DeleteOptions{
-		GracePeriodSeconds: pointer.Int64Ptr(0),
-		PropagationPolicy:  &background,
-	})
-	if apierrors.IsNotFound(err) {
-		return
-	}
-	Expect(err).NotTo(HaveOccurred())
 }
