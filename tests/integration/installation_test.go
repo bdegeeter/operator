@@ -27,7 +27,7 @@ import (
 // The default amount of time to wait while a test action is processed.
 const defaultWaitTimeout = 120 * time.Second
 
-var _ = Describe("Installation Lifecycle", func() {
+var _ = PDescribe("Installation Lifecycle", func() {
 	Context("When an installation is changed", func() {
 		It("Should run porter", func() {
 			By("By creating an agent action")

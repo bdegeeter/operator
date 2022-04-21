@@ -3,8 +3,10 @@
 package integration_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/carolynvs/magex/shx"
@@ -15,6 +17,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	cl "k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	porterv1 "get.porter.sh/operator/api/v1"
@@ -57,7 +60,11 @@ var _ = Describe("CredSet create", func() {
 				Expect(k8sClient.Create(ctx, cs)).Should(Succeed())
 				Expect(waitForPorterCS(ctx, cs, "waiting for credential set to apply")).Should(Succeed())
 				validateCredSetConditions(cs)
-
+				// patchCredSet := func(cs *porterv1.CredentialSet) {
+				// 	controllers.PatchObjectWithRetry(ctx, logr.Discard(), k8sClient, k8sClient.Patch, cs, func() client.Object {
+				// 		return &porterv1.CredentialSet{}
+				// 	})
+				// }
 				Log("install porter-test-me bundle with new credset")
 				inst := NewTestInstallation("cs-with-secret")
 				inst.ObjectMeta.Namespace = ns
@@ -67,7 +74,38 @@ var _ = Describe("CredSet create", func() {
 				Expect(k8sClient.Create(ctx, inst)).Should(Succeed())
 				Expect(waitForPorter(ctx, inst, "waiting for porter-test-me to install")).Should(Succeed())
 				validateInstallationConditions(inst)
+				action := &porterv1.AgentAction{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace: ns,
+						Name:      "agentaction-show-outputs",
+					},
+					Spec: porterv1.AgentActionSpec{
+						//Args: []string{"installations", "list", "--all-namespaces", "-o", "json"},
+						Args: []string{"installation", "outputs", "list", "-n", ns, "-i", inst.Spec.Name, "-o", "json"},
+					},
+				}
+				Expect(k8sClient.Create(ctx, action)).Should(Succeed())
+				Expect(waitForAgentAction(ctx, action, "waiting for agent action to run")).Should(Succeed())
+				getAgentActionJobOutput(ctx, action.Name, ns)
+				// newCred := porterv1.Credential{
+				// 	Name: "newValue",
+				// 	Source: porterv1.CredentialSource{
+				// 		Secret: name,
+				// 	},
+				// }
+				// cs.Spec.Credentials = []porterv1.Credential{newCred}
+				// patchCredSet(cs)
+				// Expect(waitForPorterCS(ctx, cs, "waiting for credential set to update"))
 
+				// Log("install porter-test-me bundle with new credset")
+				// newInst := NewTestInstallation("updated-cs")
+				// newInst.ObjectMeta.Namespace = ns
+				// newInst.Spec.Namespace = ns
+				// newInst.Spec.CredentialSets = append(newInst.Spec.CredentialSets, name)
+				// newInst.Spec.SchemaVersion = "1.0.0"
+				// Expect(k8sClient.Create(ctx, newInst)).Should(Succeed())
+				// Expect(waitForPorter(ctx, newInst, "waiting for porter-test-me to install")).Should(Succeed())
+				// validateInstallationConditions(newInst)
 			})
 		})
 	})
@@ -124,6 +162,46 @@ func NewTestInstallation(iName string) *porterv1.Installation {
 		},
 	}
 	return inst
+}
+
+func waitForAgentAction(ctx context.Context, aa *porterv1.AgentAction, msg string) error {
+	Log("%s: %s/%s", msg, aa.Namespace, aa.Name)
+	key := client.ObjectKey{Namespace: aa.Namespace, Name: aa.Name}
+	ctx, cancel := context.WithTimeout(ctx, getWaitTimeout())
+	defer cancel()
+	for {
+		select {
+		case <-ctx.Done():
+			Fail(errors.Wrapf(ctx.Err(), "timeout %s", msg).Error())
+		default:
+			err := k8sClient.Get(ctx, key, aa)
+			if err != nil {
+				// There is lag between creating and being able to retrieve, I don't understand why
+				if apierrors.IsNotFound(err) {
+					time.Sleep(time.Second)
+					continue
+				}
+				return err
+			}
+
+			// Check if the latest change has been processed
+			if aa.Generation == aa.Status.ObservedGeneration {
+				if apimeta.IsStatusConditionTrue(aa.Status.Conditions, string(porterv1.ConditionComplete)) {
+					return nil
+				}
+
+				if apimeta.IsStatusConditionTrue(aa.Status.Conditions, string(porterv1.ConditionFailed)) {
+					// Grab some extra info to help with debugging
+					//debugFailedCSCreate(ctx, aa)
+					return errors.New("porter did not run successfully")
+				}
+			}
+
+			time.Sleep(time.Second)
+			continue
+		}
+	}
+
 }
 
 func waitForPorterCS(ctx context.Context, cs *porterv1.CredentialSet, msg string) error {
@@ -191,4 +269,55 @@ func validateCredSetConditions(cs *porterv1.CredentialSet) {
 	Expect(apimeta.IsStatusConditionTrue(cs.Status.Conditions, string(porterv1.ConditionScheduled)))
 	Expect(apimeta.IsStatusConditionTrue(cs.Status.Conditions, string(porterv1.ConditionStarted)))
 	Expect(apimeta.IsStatusConditionTrue(cs.Status.Conditions, string(porterv1.ConditionComplete)))
+}
+
+func getAgentActionJobOutput(ctx context.Context, agentActionName string, namespace string) (string, error) {
+	actionKey := client.ObjectKey{Name: agentActionName, Namespace: namespace}
+	action := &porterv1.AgentAction{}
+	if err := k8sClient.Get(ctx, actionKey, action); err != nil {
+		Log(errors.Wrap(err, "could not retrieve the CredentialSet's AgentAction to troubleshoot").Error())
+		return "", err
+	}
+	jobKey := client.ObjectKey{Name: action.Status.Job.Name, Namespace: action.Namespace}
+	job := &batchv1.Job{}
+	if err := k8sClient.Get(ctx, jobKey, job); err != nil {
+		Log(errors.Wrap(err, "could not retrieve the Job to troubleshoot").Error())
+		return "", err
+	}
+	c, err := cl.NewForConfig(testEnv.Config)
+	if err != nil {
+		Log(err.Error())
+		return "", err
+	}
+	selector, err := metav1.LabelSelectorAsSelector(job.Spec.Selector)
+	if err != nil {
+		Log(errors.Wrap(err, "could not retrieve label selector for job").Error())
+		return "", err
+	}
+	pods, err := c.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: selector.String()})
+	if err != nil {
+		Log(errors.Wrap(err, "could not retrive pod list for job").Error())
+		return "", err
+	}
+	if len(pods.Items) != 1 {
+		Log(fmt.Sprintf("too many pods associated to agent action job. Expected 1 found %v", len(pods.Items)))
+		return "", err
+	}
+	podLogOpts := corev1.PodLogOptions{}
+	req := c.CoreV1().Pods(namespace).GetLogs(pods.Items[0].Name, &podLogOpts)
+	podLogs, err := req.Stream(ctx)
+	if err != nil {
+		Log(errors.Wrap(err, "could not stream pod logs").Error())
+		return "", err
+	}
+	defer podLogs.Close()
+	buf := new(bytes.Buffer)
+	_, err = io.Copy(buf, podLogs)
+	if err != nil {
+		Log(errors.Wrap(err, "could not copy pod logs to byte buffer").Error())
+		return "", err
+	}
+	outputLog := buf.String()
+	Log(fmt.Sprintf("Pod Logs: \n\n: %v", outputLog))
+	return outputLog, nil
 }
