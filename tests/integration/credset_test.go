@@ -7,11 +7,13 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/carolynvs/magex/shx"
 	. "github.com/onsi/ginkgo"
 	"github.com/pkg/errors"
+	"github.com/tidwall/gjson"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -35,14 +37,8 @@ var _ = Describe("CredSet create", func() {
 
 				Log(fmt.Sprintf("create k8s secret '%s' for credset", name))
 
-				csSecret := &corev1.Secret{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      name,
-						Namespace: ns,
-					},
-					Type:       corev1.SecretTypeOpaque,
-					StringData: map[string]string{"value": testSecret},
-				}
+				csSecret := NewTestSecret(name, testSecret)
+				csSecret.ObjectMeta.Namespace = ns
 				Expect(k8sClient.Create(ctx, csSecret)).Should(Succeed())
 
 				Log(fmt.Sprintf("create credential set '%s' for credset", name))
@@ -120,7 +116,83 @@ var _ = PDescribe("CredSet update", func() {
 	})
 })
 
-var _ = PDescribe("CredSet delete", func() {})
+var _ = Describe("CredSet delete", func() {
+	Context("when an existing CredentialSet is delete", func() {
+		It("should run porter credentials delete", func() {
+			By("creating an agent action", func() {
+				ctx := context.Background()
+				ns := createTestNamespace(ctx)
+				name := "test-cs-" + ns
+				testSecret := "secret-value"
+
+				Log(fmt.Sprintf("create k8s secret '%s' for credset", name))
+				csSecret := NewTestSecret(name, testSecret)
+				csSecret.ObjectMeta.Namespace = ns
+				Expect(k8sClient.Create(ctx, csSecret)).Should(Succeed())
+
+				Log(fmt.Sprintf("create credential set '%s' for credset", name))
+				cs := NewTestCredSet(name)
+				cs.ObjectMeta.Namespace = ns
+				cred := porterv1.Credential{
+					Name: "test-credential",
+					Source: porterv1.CredentialSource{
+						Secret: name,
+					},
+				}
+				cs.Spec.Credentials = append(cs.Spec.Credentials, cred)
+				cs.Spec.Namespace = ns
+
+				Expect(k8sClient.Create(ctx, cs)).Should(Succeed())
+				Expect(waitForPorterCS(ctx, cs, "waiting for credential set to apply")).Should(Succeed())
+				validateCredSetConditions(cs)
+				createCheck := &porterv1.AgentAction{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace: ns,
+						Name:      "create-check-credentials-list",
+					},
+					Spec: porterv1.AgentActionSpec{
+						Args: []string{"credentials", "list", "-n", ns, "-o", "json"},
+					},
+				}
+				Expect(k8sClient.Create(ctx, createCheck)).Should(Succeed())
+				Expect(waitForAgentAction(ctx, createCheck, "waiting for credentials list agent action to run")).Should(Succeed())
+				aaOut, err := getAgentActionJobOutput(ctx, createCheck.Name, ns)
+				Expect(err).Error().ShouldNot(HaveOccurred())
+
+				jsonOut := getAgentActionCmdOut(createCheck, aaOut)
+				firstName := gjson.Get(jsonOut, "0.name").String()
+				numCreds := gjson.Get(jsonOut, "#").Int()
+				firstCredName := gjson.Get(jsonOut, "0.credentials.0.name").String()
+				Expect(int64(1)).To(Equal(numCreds))
+				Expect(name).To(Equal(firstName))
+				Expect("test-credential").To(Equal(firstCredName))
+
+				Log("delete a credential set")
+				Expect(k8sClient.Delete(ctx, cs)).Should(Succeed())
+				Expect(waitForPorterCS(ctx, cs, "waiting for credential set to delete")).Should(Succeed())
+
+				Log("verify it's gone")
+				delCheck := &porterv1.AgentAction{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace: ns,
+						Name:      "delete-check-credentials-list",
+					},
+					Spec: porterv1.AgentActionSpec{
+						Args: []string{"credentials", "list", "-n", ns, "-o", "json"},
+					},
+				}
+				Expect(k8sClient.Create(ctx, delCheck)).Should(Succeed())
+				Expect(waitForAgentAction(ctx, delCheck, "waiting for credentials list agent action to run")).Should(Succeed())
+				daOut, err := getAgentActionJobOutput(ctx, delCheck.Name, ns)
+				Expect(err).Error().ShouldNot(HaveOccurred())
+				delJsonOut := getAgentActionCmdOut(createCheck, daOut)
+				delNumCreds := gjson.Get(delJsonOut, "#").Int()
+				Expect(int64(0)).To(Equal(delNumCreds))
+
+			})
+		})
+	})
+})
 
 var _ = PDescribe("New Installation with CredentialSet", func() {})
 
@@ -141,6 +213,17 @@ func NewTestCredSet(csName string) *porterv1.CredentialSet {
 		},
 	}
 	return cs
+}
+
+func NewTestSecret(name, value string) *corev1.Secret {
+	csSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+		},
+		Type:       corev1.SecretTypeOpaque,
+		StringData: map[string]string{"value": value},
+	}
+	return csSecret
 }
 
 func NewTestInstallation(iName string) *porterv1.Installation {
@@ -318,6 +401,9 @@ func getAgentActionJobOutput(ctx context.Context, agentActionName string, namesp
 		return "", err
 	}
 	outputLog := buf.String()
-	Log(fmt.Sprintf("Pod Logs: \n\n: %v", outputLog))
 	return outputLog, nil
+}
+
+func getAgentActionCmdOut(action *porterv1.AgentAction, aaOut string) string {
+	return strings.SplitAfterN(strings.Replace(aaOut, "\n", "", -1), strings.Join(action.Spec.Args, " "), 2)[1]
 }
