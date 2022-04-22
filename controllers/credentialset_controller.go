@@ -14,6 +14,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	porterv1 "get.porter.sh/operator/api/v1"
 )
@@ -76,13 +77,11 @@ func (r *CredentialSetReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, err
 	}
 
-	// TODO: does a cs need a finalizer?
-	/*
-		if isDeleteProcessed(cs) {
-			err = removeFinalizer(ctx, log, r.Client, cs)
-
-		}
-	*/
+	if isDeleteProcessed(cs) {
+		err = removeCredSetFinalizer(ctx, log, r.Client, cs)
+		log.V(Log4Debug).Info("Reconciliation complete: Finalizer has been removed from the CredentialSet.")
+		return ctrl.Result{}, err
+	}
 
 	if handled {
 		// Check if retry was requested
@@ -97,8 +96,9 @@ func (r *CredentialSetReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, nil
 	}
 
+	//TODO: should uninstall not needed for cs
 	// Should we delete the credential
-	if r.shouldUninstall(cs) {
+	if r.shouldDelete(cs) {
 		err = r.deleteCredentialSet(ctx, log, cs)
 		log.V(Log4Debug).Info("Reconciliation complete: A porter agent has been dispatched to delete the credential set")
 		return ctrl.Result{}, err
@@ -170,7 +170,7 @@ func (r *CredentialSetReconciler) saveStatus(ctx context.Context, log logr.Logge
 }
 
 // TODO: Maybe this could be an interface method?
-func (r *CredentialSetReconciler) shouldUninstall(cs *porterv1.CredentialSet) bool {
+func (r *CredentialSetReconciler) shouldDelete(cs *porterv1.CredentialSet) bool {
 	// ignore a deleted CRD with no finalizers
 	return isDeleted(cs) && isFinalizerSet(cs)
 }
@@ -196,7 +196,7 @@ func (r *CredentialSetReconciler) deleteCredentialSet(ctx context.Context, log l
 		return err
 	}
 
-	return r.runPorter(ctx, log, cs)
+	return r.runPorterDeleteCredSet(ctx, log, cs)
 }
 
 // This could be the main "runFunction for each controller"
@@ -207,20 +207,22 @@ func (r *CredentialSetReconciler) runPorter(ctx context.Context, log logr.Logger
 		return err
 	}
 
-	// Update the Installation Status with the agent action
+	// Update the CredentialSet Status with the agent action
 	return r.syncStatus(ctx, log, cs, action)
 }
 
-// TODO: Factory method under agent action?
-// create an AgentAction that will trigger running porter
-func (r *CredentialSetReconciler) createAgentAction(ctx context.Context, log logr.Logger, cs *porterv1.CredentialSet) (*porterv1.AgentAction, error) {
-	log.V(Log5Trace).Info("Creating porter agent action")
-
-	credSetResourceB, err := cs.Spec.ToPorterDocument()
+// runPorterDeleteCredSet
+func (r *CredentialSetReconciler) runPorterDeleteCredSet(ctx context.Context, log logr.Logger, cs *porterv1.CredentialSet) error {
+	action, err := r.createCredSetDeleteAgentAction(ctx, log, cs)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
+	// Update the CredentialSet Status with the agent action
+	return r.syncStatus(ctx, log, cs, action)
+}
+
+func newAgentAction(cs *porterv1.CredentialSet) *porterv1.AgentAction {
 	labels := getActionLabels(cs)
 	for k, v := range cs.Labels {
 		labels[k] = v
@@ -246,12 +248,23 @@ func (r *CredentialSetReconciler) createAgentAction(ctx context.Context, log log
 		Spec: porterv1.AgentActionSpec{
 			AgentConfig:  cs.Spec.AgentConfig,
 			PorterConfig: cs.Spec.PorterConfig,
-			Args:         []string{"credentials", "apply", "credentials.yaml"},
-			Files: map[string][]byte{
-				"credentials.yaml": credSetResourceB,
-			},
 		},
 	}
+	return action
+}
+
+// create a porter credentials apply AgentAction
+func (r *CredentialSetReconciler) createAgentAction(ctx context.Context, log logr.Logger, cs *porterv1.CredentialSet) (*porterv1.AgentAction, error) {
+	log.V(Log5Trace).Info("Creating porter agent action")
+
+	credSetResourceB, err := cs.Spec.ToPorterDocument()
+	if err != nil {
+		return nil, err
+	}
+
+	action := newAgentAction(cs)
+	action.Spec.Args = []string{"credentials", "apply", "credentials.yaml"}
+	action.Spec.Files = map[string][]byte{"credentials.yaml": credSetResourceB}
 
 	if err := r.Create(ctx, action); err != nil {
 		return nil, errors.Wrap(err, "error creating the porter agent action")
@@ -261,7 +274,21 @@ func (r *CredentialSetReconciler) createAgentAction(ctx context.Context, log log
 	return action, nil
 }
 
-// TODO: Combine
+// create a porter credentials delete AgentAction
+func (r *CredentialSetReconciler) createCredSetDeleteAgentAction(ctx context.Context, log logr.Logger, cs *porterv1.CredentialSet) (*porterv1.AgentAction, error) {
+	log.V(Log5Trace).Info("Creating porter credentials delete agent action")
+
+	action := newAgentAction(cs)
+	action.Spec.Args = []string{"credentials", "delete", "-n", cs.Spec.Namespace, cs.Spec.Name}
+
+	if err := r.Create(ctx, action); err != nil {
+		return nil, errors.Wrap(err, "error creating the porter credentials delete agent action")
+	}
+
+	log.V(Log4Debug).Info("Created porter credentials delete agent action", "name", action.Name)
+	return action, nil
+}
+
 // Sync the retry annotation from the credential set to the agent action to trigger another run.
 func (r *CredentialSetReconciler) retry(ctx context.Context, log logr.Logger, cs *porterv1.CredentialSet, action *porterv1.AgentAction) error {
 	log.V(Log5Trace).Info("Initializing installation status")
@@ -280,4 +307,11 @@ func (r *CredentialSetReconciler) retry(ctx context.Context, log logr.Logger, cs
 
 	log.V(Log4Debug).Info("Retried associated porter agent action", "name", "retry", action.Name, retry)
 	return nil
+}
+
+// removeFinalizer deletes the porter finalizer from the specified resource and saves it.
+func removeCredSetFinalizer(ctx context.Context, log logr.Logger, client client.Client, cs *porterv1.CredentialSet) error {
+	log.V(Log5Trace).Info("removing finalizer")
+	controllerutil.RemoveFinalizer(cs, porterv1.FinalizerName)
+	return client.Update(ctx, cs)
 }

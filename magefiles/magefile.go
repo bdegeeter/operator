@@ -32,6 +32,7 @@ import (
 	"github.com/carolynvs/magex/shx"
 	"github.com/carolynvs/magex/xplat"
 	"github.com/magefile/mage/mg"
+	"github.com/magefile/mage/target"
 	"github.com/pkg/errors"
 	"golang.org/x/sync/errgroup"
 	// mage:import
@@ -56,6 +57,9 @@ const (
 	// Porter home for running commands
 	porterVersion = "v1.0.0-alpha.13"
 )
+
+var srcDirs = []string{"api", "config", "controllers", "installer", "installer-olm"}
+var binDir = "bin"
 
 //TODO: sort out getting k8s plugin into porter-agent
 var localAgentImgRepository = "localhost:5000/porter-agent-kubernetes"
@@ -358,6 +362,14 @@ func DocsDeployPreview() error {
 
 // Build the operator and deploy it to the test cluster using
 func Deploy() {
+	rebuild, err := target.Dir(binDir, srcDirs...)
+	if err != nil {
+		mgx.Must(fmt.Errorf("error inspecting source dirs %s: %w", srcDirs, err))
+	}
+	if !rebuild {
+		log.Println("no changes to build or deploy")
+		return
+	}
 	mg.Deps(UseTestEnvironment, EnsureTestCluster)
 
 	meta := releases.LoadMetadata()

@@ -26,7 +26,7 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-var _ = FDescribe("CredentialSet create", func() {
+var _ = Describe("CredentialSet create", func() {
 	Context("when a new CredentialSet resource is created with secret source", func() {
 		It("should run porter", func() {
 			By("creating an agent action", func() {
@@ -91,7 +91,7 @@ var _ = Describe("CredSet delete", func() {
 			By("creating an agent action", func() {
 				ctx := context.Background()
 				ns := createTestNamespace(ctx)
-				name := "test-cs-" + ns
+				name := "cs-delete-" + ns
 				testSecret := "secret-value"
 
 				Log(fmt.Sprintf("create k8s secret '%s' for credset", name))
@@ -101,6 +101,7 @@ var _ = Describe("CredSet delete", func() {
 
 				Log(fmt.Sprintf("create credential set '%s' for credset", name))
 				cs := NewTestCredSet(name)
+				cs.Spec.Name = "cs-delete-test"
 				cs.ObjectMeta.Namespace = ns
 				cred := porterv1.Credential{
 					Name: "test-credential",
@@ -133,12 +134,12 @@ var _ = Describe("CredSet delete", func() {
 				numCreds := gjson.Get(jsonOut, "#").Int()
 				firstCredName := gjson.Get(jsonOut, "0.credentials.0.name").String()
 				Expect(int64(1)).To(Equal(numCreds))
-				Expect(name).To(Equal(firstName))
+				Expect(cs.Spec.Name).To(Equal(firstName))
 				Expect("test-credential").To(Equal(firstCredName))
 
 				Log("delete a credential set")
 				Expect(k8sClient.Delete(ctx, cs)).Should(Succeed())
-				Expect(waitForPorterCS(ctx, cs, "waiting for credential set to delete")).Should(Succeed())
+				Expect(waitForCredSetDeleted(ctx, cs)).Should(Succeed())
 
 				Log("verify it's gone")
 				delCheck := &porterv1.AgentAction{
@@ -163,7 +164,7 @@ var _ = Describe("CredSet delete", func() {
 	})
 })
 
-var _ = PDescribe("New Installation with CredentialSet", func() {})
+var _ = Describe("New Installation with CredentialSet", func() {})
 
 //NewTestCredSet minimal CredentialSet CRD for tests
 func NewTestCredSet(csName string) *porterv1.CredentialSet {
@@ -299,6 +300,30 @@ func waitForPorterCS(ctx context.Context, cs *porterv1.CredentialSet, msg string
 					debugFailedCSCreate(ctx, cs)
 					return errors.New("porter did not run successfully")
 				}
+			}
+
+			time.Sleep(time.Second)
+			continue
+		}
+	}
+}
+
+func waitForCredSetDeleted(ctx context.Context, cs *porterv1.CredentialSet) error {
+	Log("Waiting for CredentialSet to finish deleting: %s/%s", cs.Namespace, cs.Name)
+	key := client.ObjectKey{Namespace: cs.Namespace, Name: cs.Name}
+	waitCtx, cancel := context.WithTimeout(ctx, getWaitTimeout())
+	defer cancel()
+	for {
+		select {
+		case <-waitCtx.Done():
+			Fail(errors.Wrap(waitCtx.Err(), "timeout waiting for CredentialSet to delete").Error())
+		default:
+			err := k8sClient.Get(ctx, key, cs)
+			if err != nil {
+				if apierrors.IsNotFound(err) {
+					return nil
+				}
+				return err
 			}
 
 			time.Sleep(time.Second)
