@@ -39,7 +39,7 @@ import (
 
 const (
 	// Name of the KIND cluster used for testing
-	kindClusterName = "porter-operator"
+	kindClusterName = "porter"
 
 	// Namespace where you can do manual testing
 	testNamespace = "test"

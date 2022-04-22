@@ -26,7 +26,7 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-var _ = Describe("CredSet create", func() {
+var _ = FDescribe("CredentialSet create", func() {
 	Context("when a new CredentialSet resource is created with secret source", func() {
 		It("should run porter", func() {
 			By("creating an agent action", func() {
@@ -56,11 +56,7 @@ var _ = Describe("CredSet create", func() {
 				Expect(k8sClient.Create(ctx, cs)).Should(Succeed())
 				Expect(waitForPorterCS(ctx, cs, "waiting for credential set to apply")).Should(Succeed())
 				validateCredSetConditions(cs)
-				// patchCredSet := func(cs *porterv1.CredentialSet) {
-				// 	controllers.PatchObjectWithRetry(ctx, logr.Discard(), k8sClient, k8sClient.Patch, cs, func() client.Object {
-				// 		return &porterv1.CredentialSet{}
-				// 	})
-				// }
+
 				Log("install porter-test-me bundle with new credset")
 				inst := NewTestInstallation("cs-with-secret")
 				inst.ObjectMeta.Namespace = ns
@@ -70,38 +66,11 @@ var _ = Describe("CredSet create", func() {
 				Expect(k8sClient.Create(ctx, inst)).Should(Succeed())
 				Expect(waitForPorter(ctx, inst, "waiting for porter-test-me to install")).Should(Succeed())
 				validateInstallationConditions(inst)
-				action := &porterv1.AgentAction{
-					ObjectMeta: metav1.ObjectMeta{
-						Namespace: ns,
-						Name:      "agentaction-show-outputs",
-					},
-					Spec: porterv1.AgentActionSpec{
-						//Args: []string{"installations", "list", "--all-namespaces", "-o", "json"},
-						Args: []string{"installation", "outputs", "list", "-n", ns, "-i", inst.Spec.Name, "-o", "json"},
-					},
-				}
-				Expect(k8sClient.Create(ctx, action)).Should(Succeed())
-				Expect(waitForAgentAction(ctx, action, "waiting for agent action to run")).Should(Succeed())
-				getAgentActionJobOutput(ctx, action.Name, ns)
-				// newCred := porterv1.Credential{
-				// 	Name: "newValue",
-				// 	Source: porterv1.CredentialSource{
-				// 		Secret: name,
-				// 	},
-				// }
-				// cs.Spec.Credentials = []porterv1.Credential{newCred}
-				// patchCredSet(cs)
-				// Expect(waitForPorterCS(ctx, cs, "waiting for credential set to update"))
 
-				// Log("install porter-test-me bundle with new credset")
-				// newInst := NewTestInstallation("updated-cs")
-				// newInst.ObjectMeta.Namespace = ns
-				// newInst.Spec.Namespace = ns
-				// newInst.Spec.CredentialSets = append(newInst.Spec.CredentialSets, name)
-				// newInst.Spec.SchemaVersion = "1.0.0"
-				// Expect(k8sClient.Create(ctx, newInst)).Should(Succeed())
-				// Expect(waitForPorter(ctx, newInst, "waiting for porter-test-me to install")).Should(Succeed())
-				// validateInstallationConditions(newInst)
+				// Validate that the correct credential set was used by the installation
+				jsonOut := runAgentAction(ctx, "show-outputs", ns, fmt.Sprintf("installation outputs list -n %s -i %s -o json", ns, inst.Spec.Name))
+				credsValue := gjson.Get(jsonOut, `#(name=="outInsecureValue").value`).String()
+				Expect(credsValue).To(Equal(testSecret))
 			})
 		})
 	})
@@ -240,11 +209,23 @@ func NewTestInstallation(iName string) *porterv1.Installation {
 			Name:          iName,
 			Bundle: porterv1.OCIReferenceParts{
 				Repository: "ghcr.io/bdegeeter/porter-test-me",
-				Version:    "0.2.0",
+				Version:    "0.3.0",
 			},
 		},
 	}
 	return inst
+}
+
+func newAgentAction(namespace string, name string, cmd string) *porterv1.AgentAction {
+	return &porterv1.AgentAction{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: namespace,
+			Name:      name,
+		},
+		Spec: porterv1.AgentActionSpec{
+			Args: strings.Split(cmd, " "),
+		},
+	}
 }
 
 func waitForAgentAction(ctx context.Context, aa *porterv1.AgentAction, msg string) error {
@@ -354,6 +335,7 @@ func validateCredSetConditions(cs *porterv1.CredentialSet) {
 	Expect(apimeta.IsStatusConditionTrue(cs.Status.Conditions, string(porterv1.ConditionComplete)))
 }
 
+// Get the pod logs associated to the job created by the agent action
 func getAgentActionJobOutput(ctx context.Context, agentActionName string, namespace string) (string, error) {
 	actionKey := client.ObjectKey{Name: agentActionName, Namespace: namespace}
 	action := &porterv1.AgentAction{}
@@ -361,12 +343,14 @@ func getAgentActionJobOutput(ctx context.Context, agentActionName string, namesp
 		Log(errors.Wrap(err, "could not retrieve the CredentialSet's AgentAction to troubleshoot").Error())
 		return "", err
 	}
+	// Find the job associated with the agent action
 	jobKey := client.ObjectKey{Name: action.Status.Job.Name, Namespace: action.Namespace}
 	job := &batchv1.Job{}
 	if err := k8sClient.Get(ctx, jobKey, job); err != nil {
 		Log(errors.Wrap(err, "could not retrieve the Job to troubleshoot").Error())
 		return "", err
 	}
+	// Create a new k8s client that's use for fetching pod logs. This is not implemented on the controller-runtime client
 	c, err := cl.NewForConfig(testEnv.Config)
 	if err != nil {
 		Log(err.Error())
@@ -377,6 +361,7 @@ func getAgentActionJobOutput(ctx context.Context, agentActionName string, namesp
 		Log(errors.Wrap(err, "could not retrieve label selector for job").Error())
 		return "", err
 	}
+	// Get the pod associated with the job. There should only be 1
 	pods, err := c.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: selector.String()})
 	if err != nil {
 		Log(errors.Wrap(err, "could not retrive pod list for job").Error())
@@ -387,6 +372,7 @@ func getAgentActionJobOutput(ctx context.Context, agentActionName string, namesp
 		return "", err
 	}
 	podLogOpts := corev1.PodLogOptions{}
+	// Fetch the pod logs
 	req := c.CoreV1().Pods(namespace).GetLogs(pods.Items[0].Name, &podLogOpts)
 	podLogs, err := req.Stream(ctx)
 	if err != nil {
@@ -406,4 +392,17 @@ func getAgentActionJobOutput(ctx context.Context, agentActionName string, namesp
 
 func getAgentActionCmdOut(action *porterv1.AgentAction, aaOut string) string {
 	return strings.SplitAfterN(strings.Replace(aaOut, "\n", "", -1), strings.Join(action.Spec.Args, " "), 2)[1]
+}
+
+/* Fully exeucte an agent action and return the associated result of the command executed. For example an agent action
+that does "porter credentials list" will return just the result of the porter command from the job logs. This can be
+used to run porter commands inside the cluster to validate porter state
+*/
+func runAgentAction(ctx context.Context, actionName string, namespace string, cmd string) string {
+	aa := newAgentAction(namespace, actionName, cmd)
+	Expect(k8sClient.Create(ctx, aa)).Should(Succeed())
+	Expect(waitForAgentAction(ctx, aa, fmt.Sprintf("waiting for action %s to run", actionName))).Should(Succeed())
+	aaOut, err := getAgentActionJobOutput(ctx, aa.Name, namespace)
+	Expect(err).Error().ShouldNot(HaveOccurred())
+	return getAgentActionCmdOut(aa, aaOut)
 }
