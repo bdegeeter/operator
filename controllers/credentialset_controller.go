@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 
 	"github.com/go-logr/logr"
@@ -184,7 +185,7 @@ func (r *CredentialSetReconciler) applyCredentialSet(ctx context.Context, log lo
 		return err
 	}
 
-	return r.runPorter(ctx, log, cs)
+	return r.runPorter(ctx, log, cs, false)
 }
 
 // TODO: Same as above
@@ -196,24 +197,13 @@ func (r *CredentialSetReconciler) deleteCredentialSet(ctx context.Context, log l
 		return err
 	}
 
-	return r.runPorterDeleteCredSet(ctx, log, cs)
+	return r.runPorter(ctx, log, cs, true)
 }
 
 // This could be the main "runFunction for each controller"
 // Trigger an agent
-func (r *CredentialSetReconciler) runPorter(ctx context.Context, log logr.Logger, cs *porterv1.CredentialSet) error {
-	action, err := r.createAgentAction(ctx, log, cs)
-	if err != nil {
-		return err
-	}
-
-	// Update the CredentialSet Status with the agent action
-	return r.syncStatus(ctx, log, cs, action)
-}
-
-// runPorterDeleteCredSet
-func (r *CredentialSetReconciler) runPorterDeleteCredSet(ctx context.Context, log logr.Logger, cs *porterv1.CredentialSet) error {
-	action, err := r.createCredSetDeleteAgentAction(ctx, log, cs)
+func (r *CredentialSetReconciler) runPorter(ctx context.Context, log logr.Logger, cs *porterv1.CredentialSet, delete bool) error {
+	action, err := r.createAgentAction(ctx, log, cs, delete)
 	if err != nil {
 		return err
 	}
@@ -253,39 +243,31 @@ func newAgentAction(cs *porterv1.CredentialSet) *porterv1.AgentAction {
 	return action
 }
 
-// create a porter credentials apply AgentAction
-func (r *CredentialSetReconciler) createAgentAction(ctx context.Context, log logr.Logger, cs *porterv1.CredentialSet) (*porterv1.AgentAction, error) {
-	log.V(Log5Trace).Info("Creating porter agent action")
-
+// create a porter credentials AgentAction for applying or deleting credential sets
+func (r *CredentialSetReconciler) createAgentAction(ctx context.Context, log logr.Logger, cs *porterv1.CredentialSet, delete bool) (*porterv1.AgentAction, error) {
+	porterAction := "apply"
+	if delete {
+		porterAction = "delete"
+	}
+	log.V(Log5Trace).Info(fmt.Sprintf("Creating porter credential set %s agent action", porterAction))
 	credSetResourceB, err := cs.Spec.ToPorterDocument()
 	if err != nil {
 		return nil, err
 	}
 
 	action := newAgentAction(cs)
-	action.Spec.Args = []string{"credentials", "apply", "credentials.yaml"}
-	action.Spec.Files = map[string][]byte{"credentials.yaml": credSetResourceB}
-
-	if err := r.Create(ctx, action); err != nil {
-		return nil, errors.Wrap(err, "error creating the porter agent action")
+	if delete {
+		action.Spec.Args = []string{"credentials", porterAction, "-n", cs.Spec.Namespace, cs.Spec.Name}
+	} else {
+		action.Spec.Args = []string{"credentials", porterAction, "credentials.yaml"}
+		action.Spec.Files = map[string][]byte{"credentials.yaml": credSetResourceB}
 	}
 
-	log.V(Log4Debug).Info("Created porter agent action", "name", action.Name)
-	return action, nil
-}
-
-// create a porter credentials delete AgentAction
-func (r *CredentialSetReconciler) createCredSetDeleteAgentAction(ctx context.Context, log logr.Logger, cs *porterv1.CredentialSet) (*porterv1.AgentAction, error) {
-	log.V(Log5Trace).Info("Creating porter credentials delete agent action")
-
-	action := newAgentAction(cs)
-	action.Spec.Args = []string{"credentials", "delete", "-n", cs.Spec.Namespace, cs.Spec.Name}
-
 	if err := r.Create(ctx, action); err != nil {
-		return nil, errors.Wrap(err, "error creating the porter credentials delete agent action")
+		return nil, errors.Wrap(err, fmt.Sprintf("error creating the porter credential set %s agent action", porterAction))
 	}
 
-	log.V(Log4Debug).Info("Created porter credentials delete agent action", "name", action.Name)
+	log.V(Log4Debug).Info(fmt.Sprintf("Created porter credential set %s agent action", porterAction), "name", action.Name)
 	return action, nil
 }
 
