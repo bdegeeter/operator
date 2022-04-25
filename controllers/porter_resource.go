@@ -11,7 +11,6 @@ import (
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/meta"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -134,7 +133,7 @@ func removeFinalizer(ctx context.Context, log logr.Logger, client client.Client,
 
 // Build the set of labels used to uniquely identify the associated AgentAction.
 func getActionLabels(resource metav1.Object) map[string]string {
-	typeInfo, err := meta.TypeAccessor(resource)
+	typeInfo, err := apimeta.TypeAccessor(resource)
 	if err != nil {
 		panic(err)
 	}

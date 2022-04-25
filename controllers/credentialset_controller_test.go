@@ -9,6 +9,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -16,9 +17,11 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/utils/pointer"
 	controllerruntime "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
 func TestCredentialSetReconiler_Reconcile(t *testing.T) {
@@ -168,7 +171,90 @@ func TestCredentialSetReconiler_Reconcile(t *testing.T) {
 }
 
 func TestCredentialSetReconciler_createAgentAction(t *testing.T) {
+	controller := setupCredentialSetController()
+	tests := []struct {
+		name   string
+		delete bool
+	}{
+		{
+			name:   "Credential Set create agent action",
+			delete: false,
+		},
+		{
+			name:   "Credential Set delete agent action",
+			delete: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cs := &porterv1.CredentialSet{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: porterv1.GroupVersion.String(),
+					Kind:       "CredentialSet",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace:  "test",
+					Name:       "myCreds",
+					UID:        "random-uid",
+					Generation: 1,
+					Labels: map[string]string{
+						"testLabel": "abc123",
+					},
+					Annotations: map[string]string{
+						porterv1.AnnotationRetry: "2021-2-2 12:00:00",
+					},
+				},
+				Spec: porterv1.CredentialSetSpec{
+					Namespace:    "dev",
+					Name:         "credset",
+					AgentConfig:  &corev1.LocalObjectReference{Name: "myAgentConfig"},
+					PorterConfig: &corev1.LocalObjectReference{Name: "myPorterConfig"},
+				},
+			}
+			controllerutil.AddFinalizer(cs, porterv1.FinalizerName)
+			if test.delete {
+				now := metav1.NewTime(time.Now())
+				cs.DeletionTimestamp = &now
+			}
+			action, err := controller.createAgentAction(context.Background(), logr.Discard(), cs)
+			require.NoError(t, err)
+			assert.Equal(t, "test", action.Namespace)
+			assert.Contains(t, action.Name, "myCreds-")
+			assert.Len(t, action.OwnerReferences, 1, "expected an owner reference")
+			wantOwnerRef := metav1.OwnerReference{
+				APIVersion:         porterv1.GroupVersion.String(),
+				Kind:               "CredentialSet",
+				Name:               "myCreds",
+				UID:                "random-uid",
+				Controller:         pointer.BoolPtr(true),
+				BlockOwnerDeletion: pointer.BoolPtr(true),
+			}
+			assert.Equal(t, wantOwnerRef, action.OwnerReferences[0], "incorrect owner reference")
+			assertContains(t, action.Annotations, porterv1.AnnotationRetry, cs.Annotations[porterv1.AnnotationRetry], "incorrect annotation")
+			assertContains(t, action.Labels, porterv1.LabelManaged, "true", "incorrect label")
+			assertContains(t, action.Labels, porterv1.LabelResourceKind, "CredentialSet", "incorrect label")
+			assertContains(t, action.Labels, porterv1.LabelResourceName, "myCreds", "incorrect label")
+			assertContains(t, action.Labels, porterv1.LabelResourceGeneration, "1", "incorrect label")
+			assertContains(t, action.Labels, "testLabel", "abc123", "incorrect label")
 
+			assert.Equal(t, cs.Spec.AgentConfig, action.Spec.AgentConfig, "incorrect AgentConfig reference")
+			assert.Equal(t, cs.Spec.AgentConfig, action.Spec.AgentConfig, "incorrect PorterConfig reference")
+			assert.Nilf(t, action.Spec.Command, "should use the default command for the agent")
+			if test.delete {
+				assert.Equal(t, []string{"credentials", "delete", "-n", cs.Spec.Namespace, cs.Spec.Name}, action.Spec.Args, "incorrect agent arguments")
+				assert.Empty(t, action.Spec.Files["credentials.yaml"], "expected credentials.yaml to be empty")
+
+			} else {
+				assert.Equal(t, []string{"credentials", "apply", "credentials.yaml"}, action.Spec.Args, "incorrect agent arguments")
+				assert.Contains(t, action.Spec.Files, "credentials.yaml")
+				assert.NotEmpty(t, action.Spec.Files["credentials.yaml"], "expected credentials.yaml to get set on the action")
+				credSetYaml, err := cs.Spec.ToPorterDocument()
+				assert.NoError(t, err)
+				assert.Equal(t, action.Spec.Files["credentials.yaml"], credSetYaml)
+			}
+
+		})
+	}
 }
 
 func setupCredentialSetController(objs ...client.Object) CredentialSetReconciler {
