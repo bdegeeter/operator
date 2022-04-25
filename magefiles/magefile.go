@@ -362,21 +362,17 @@ func DocsDeployPreview() error {
 
 // Build the operator and deploy it to the test cluster using
 func Deploy() {
+	mg.Deps(UseTestEnvironment, EnsureTestCluster)
 	rebuild, err := target.Dir(binDir, srcDirs...)
 	if err != nil {
 		mgx.Must(fmt.Errorf("error inspecting source dirs %s: %w", srcDirs, err))
 	}
-	if !rebuild {
-		log.Println("no changes to build or deploy")
-		return
-	}
-	mg.Deps(UseTestEnvironment, EnsureTestCluster)
-
 	meta := releases.LoadMetadata()
-	PublishLocalPorterAgent()
-	PublishBundle()
-
-	porter("credentials", "apply", "hack/creds.yaml", "-n=operator").Must().RunV()
+	if rebuild {
+		PublishLocalPorterAgent()
+		PublishBundle()
+		porter("credentials", "apply", "hack/creds.yaml", "-n=operator").Must().RunV()
+	}
 	bundleRef := Env.BundlePrefix + meta.Version
 	porter("install", "operator", "-r", bundleRef, "-c=kind", "--force", "-n=operator").Must().RunV()
 }

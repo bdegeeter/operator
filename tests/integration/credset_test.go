@@ -19,6 +19,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	apitypes "k8s.io/apimachinery/pkg/types"
 	cl "k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -68,7 +69,7 @@ var _ = Describe("CredentialSet create", func() {
 				validateInstallationConditions(inst)
 
 				// Validate that the correct credential set was used by the installation
-				jsonOut := runAgentAction(ctx, "show-outputs", ns, fmt.Sprintf("installation outputs list -n %s -i %s -o json", ns, inst.Spec.Name))
+				jsonOut := runAgentAction(ctx, "show-outputs", ns, []string{"installation", "outputs", "list", "-n", ns, "-i", inst.Spec.Name, "-o", "json"})
 				credsValue := gjson.Get(jsonOut, `#(name=="outInsecureValue").value`).String()
 				Expect(credsValue).To(Equal(testSecret))
 			})
@@ -115,21 +116,9 @@ var _ = Describe("CredSet delete", func() {
 				Expect(k8sClient.Create(ctx, cs)).Should(Succeed())
 				Expect(waitForPorterCS(ctx, cs, "waiting for credential set to apply")).Should(Succeed())
 				validateCredSetConditions(cs)
-				createCheck := &porterv1.AgentAction{
-					ObjectMeta: metav1.ObjectMeta{
-						Namespace: ns,
-						Name:      "create-check-credentials-list",
-					},
-					Spec: porterv1.AgentActionSpec{
-						Args: []string{"credentials", "list", "-n", ns, "-o", "json"},
-					},
-				}
-				Expect(k8sClient.Create(ctx, createCheck)).Should(Succeed())
-				Expect(waitForAgentAction(ctx, createCheck, "waiting for credentials list agent action to run")).Should(Succeed())
-				aaOut, err := getAgentActionJobOutput(ctx, createCheck.Name, ns)
-				Expect(err).Error().ShouldNot(HaveOccurred())
 
-				jsonOut := getAgentActionCmdOut(createCheck, aaOut)
+				Log("verify it's created")
+				jsonOut := runAgentAction(ctx, "create-check-credentials-list", ns, []string{"credentials", "list", "-n", ns, "-o", "json"})
 				firstName := gjson.Get(jsonOut, "0.name").String()
 				numCreds := gjson.Get(jsonOut, "#").Int()
 				firstCredName := gjson.Get(jsonOut, "0.credentials.0.name").String()
@@ -141,24 +130,15 @@ var _ = Describe("CredSet delete", func() {
 				Expect(k8sClient.Delete(ctx, cs)).Should(Succeed())
 				Expect(waitForCredSetDeleted(ctx, cs)).Should(Succeed())
 
-				Log("verify it's gone")
-				delCheck := &porterv1.AgentAction{
-					ObjectMeta: metav1.ObjectMeta{
-						Namespace: ns,
-						Name:      "delete-check-credentials-list",
-					},
-					Spec: porterv1.AgentActionSpec{
-						Args: []string{"credentials", "list", "-n", ns, "-o", "json"},
-					},
-				}
-				Expect(k8sClient.Create(ctx, delCheck)).Should(Succeed())
-				Expect(waitForAgentAction(ctx, delCheck, "waiting for credentials list agent action to run")).Should(Succeed())
-				daOut, err := getAgentActionJobOutput(ctx, delCheck.Name, ns)
-				Expect(err).Error().ShouldNot(HaveOccurred())
-				delJsonOut := getAgentActionCmdOut(createCheck, daOut)
+				Log("verify credential set is gone from porter data store")
+				delJsonOut := runAgentAction(ctx, "delete-check-credentials-list", ns, []string{"credentials", "list", "-n", ns, "-o", "json"})
 				delNumCreds := gjson.Get(delJsonOut, "#").Int()
 				Expect(int64(0)).To(Equal(delNumCreds))
 
+				Log("verify credential set CRD is gone from k8s cluster")
+				nsName := apitypes.NamespacedName{Namespace: cs.Namespace, Name: cs.Name}
+				getCS := &porterv1.CredentialSet{}
+				Expect(k8sClient.Get(ctx, nsName, getCS)).ShouldNot(Succeed())
 			})
 		})
 	})
@@ -217,14 +197,14 @@ func NewTestInstallation(iName string) *porterv1.Installation {
 	return inst
 }
 
-func newAgentAction(namespace string, name string, cmd string) *porterv1.AgentAction {
+func newAgentAction(namespace string, name string, cmd []string) *porterv1.AgentAction {
 	return &porterv1.AgentAction{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: namespace,
 			Name:      name,
 		},
 		Spec: porterv1.AgentActionSpec{
-			Args: strings.Split(cmd, " "),
+			Args: cmd,
 		},
 	}
 }
@@ -419,11 +399,11 @@ func getAgentActionCmdOut(action *porterv1.AgentAction, aaOut string) string {
 	return strings.SplitAfterN(strings.Replace(aaOut, "\n", "", -1), strings.Join(action.Spec.Args, " "), 2)[1]
 }
 
-/* Fully exeucte an agent action and return the associated result of the command executed. For example an agent action
+/* Fully execute an agent action and return the associated result of the command executed. For example an agent action
 that does "porter credentials list" will return just the result of the porter command from the job logs. This can be
 used to run porter commands inside the cluster to validate porter state
 */
-func runAgentAction(ctx context.Context, actionName string, namespace string, cmd string) string {
+func runAgentAction(ctx context.Context, actionName string, namespace string, cmd []string) string {
 	aa := newAgentAction(namespace, actionName, cmd)
 	Expect(k8sClient.Create(ctx, aa)).Should(Succeed())
 	Expect(waitForAgentAction(ctx, aa, fmt.Sprintf("waiting for action %s to run", actionName))).Should(Succeed())

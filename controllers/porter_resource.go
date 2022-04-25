@@ -88,11 +88,13 @@ func applyAgentAction(log logr.Logger, resource porterResource, action *porterv1
 	resource.SetStatus(status)
 }
 
+// this is our kubectl delete check
 func isDeleted(resource porterResource) bool {
 	timestamp := resource.GetDeletionTimestamp()
 	return timestamp != nil && !timestamp.IsZero()
 }
 
+// ensure delete action is completed before delete
 func isDeleteProcessed(resource porterResource) bool {
 	status := resource.GetStatus()
 	return isDeleted(resource) && apimeta.IsStatusConditionTrue(status.Conditions, string(porterv1.ConditionComplete))
