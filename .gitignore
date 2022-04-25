@@ -29,4 +29,4 @@ installer/porter.yaml
 *.swp
 *.swo
 *~
-.vscode/settings.json
+coverage/coverage.html

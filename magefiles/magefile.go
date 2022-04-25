@@ -317,20 +317,12 @@ func TestIntegration() {
 
 	kubectl("delete", "deployment", "porter-operator-controller-manager", "-n=porter-operator-system").RunV()
 
-	/*
-		v := ""
-		if mg.Verbose() {
-			v = "-v"
-		}
-			must.Command("go", "test", v, "-tags=integration", "./tests/integration/...", "-coverprofile=coverage-integration.out", "-args", "-ginkgo.v").
-				CollapseArgs().Env("ACK_GINKGO_DEPRECATIONS=1.16.5").RunV()
-	*/
 	if os.Getenv("PORTER_AGENT_REPOSITORY") != "" && os.Getenv("PORTER_AGENT_VERSION") != "" {
 		localAgentImgRepository = os.Getenv("PORTER_AGENT_REPOSITORY")
 		localAgentImgVersion = os.Getenv("PORTER_AGENT_VERSION")
 	}
 	//"-p", "-nodes", "4",
-	must.Command("ginkgo").Args("-v", "-tags=integration", "./tests/integration", "-coverprofile=coverage-integration.out").
+	must.Command("ginkgo").Args("-v", "-tags=integration", "./tests/integration/...", "-coverprofile=coverage-integration.out").
 		Env(fmt.Sprintf("PORTER_AGENT_REPOSITORY=%s", localAgentImgRepository),
 			fmt.Sprintf("PORTER_AGENT_VERSION=%s", localAgentImgVersion),
 			"ACK_GINKGO_DEPRECATIONS=1.16.5",
