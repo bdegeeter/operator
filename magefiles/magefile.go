@@ -8,7 +8,6 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -19,11 +18,15 @@ import (
 	. "get.porter.sh/magefiles/docker"
 	"get.porter.sh/magefiles/porter"
 	"get.porter.sh/magefiles/releases"
+
+	//mage:import
 	. "get.porter.sh/magefiles/tests"
 	"get.porter.sh/magefiles/tools"
 	. "get.porter.sh/operator/mage"
 	"get.porter.sh/operator/mage/docs"
 	"get.porter.sh/porter/pkg/cnab"
+	"get.porter.sh/porter/pkg/portercontext"
+	porteryaml "get.porter.sh/porter/pkg/yaml"
 	"github.com/carolynvs/magex/ci"
 	"github.com/carolynvs/magex/mgx"
 	"github.com/carolynvs/magex/pkg"
@@ -50,19 +53,19 @@ const (
 	// Namespace of the porter operator
 	operatorNamespace = "porter-operator-system"
 
-	// Container name of the local registry
-	registryContainer = "registry"
-
-	// Porter home for running commands
-	porterVersion = "v1.0.0-rc.1"
+	// Porter cli version for running commands
+	porterVersion = "v1.0.1"
 )
 
-var srcDirs = []string{"api", "config", "controllers", "installer", "installer-olm"}
-var binDir = "bin"
+var (
+	srcDirs = []string{"api", "config", "controllers", "installer", "installer-olm"}
+	binDir  = "bin"
+)
 
-// Porter agent that has k8s plugin included
-var porterAgentImgRepository = "ghcr.io/getporter/dev/porter-agent-kubernetes"
-var porterAgentImgVersion = "v1.0.0-rc.1"
+var (
+	porterAgentImgRepository = "ghcr.io/getporter/porter-agent"
+	porterAgentImgVersion    = "v1.0.2"
+)
 
 // Local porter agent image name to use for local testing
 var localAgentImgName = "localhost:5000/porter-agent:canary-dev"
@@ -80,7 +83,7 @@ func addGopathBinOnGithubActions() error {
 
 	log.Println("Adding GOPATH/bin to the PATH for the GitHub Actions Agent")
 	gopathBin := gopath.GetGopathBin()
-	return ioutil.WriteFile(githubPath, []byte(gopathBin), 0644)
+	return os.WriteFile(githubPath, []byte(gopathBin), 0644)
 }
 
 // Ensure EnsureMage is installed and on the PATH.
@@ -94,6 +97,11 @@ func Fmt() {
 
 func Vet() {
 	must.RunV("go", "vet", "./...")
+}
+
+func Lint() {
+	mg.Deps(tools.EnsureStaticCheck)
+	must.RunV("staticcheck", "./...")
 }
 
 // Build the controller and bundle.
@@ -118,14 +126,14 @@ func GenerateController() error {
 
 // Build the porter-operator bundle.
 func BuildBundle() {
-	mg.SerialDeps(getPlugins, getMixins, StartDockerRegistry, PublishImages)
+	mg.SerialDeps(getMixins, StartDockerRegistry, PublishImages)
 
 	buildManifests()
 
 	meta := releases.LoadMetadata()
 	version := strings.TrimPrefix(meta.Version, "v")
 	buildPorterCmd("build", "--version", version, "-f=porter.yaml").
-		CollapseArgs().Env("PORTER_EXPERIMENTAL=build-drivers", "PORTER_BUILD_DRIVER=buildkit").
+		Env("PORTER_EXPERIMENTAL=build-drivers", "PORTER_BUILD_DRIVER=buildkit").
 		In("installer").Must().RunV()
 }
 
@@ -148,44 +156,6 @@ func BuildImages() {
 	mgx.Must(p.SetEnv("MANAGER_IMAGE", img))
 }
 
-func getPlugins() error {
-	// TODO: move this to a shared target in porter
-
-	plugins := []struct {
-		name    string
-		url     string
-		feed    string
-		version string
-	}{
-		{name: "kubernetes", feed: "https://cdn.porter.sh/plugins/atom.xml", version: "v1.0.0-rc.1"},
-	}
-	var errG errgroup.Group
-	for _, plugin := range plugins {
-		plugin := plugin
-		pluginDir := filepath.Join("bin/plugins/", plugin.name)
-		if _, err := os.Stat(pluginDir); err == nil {
-			log.Println("Plugin already installed into bin:", plugin.name)
-			continue
-		}
-
-		errG.Go(func() error {
-			log.Println("Installing plugin:", plugin.name)
-			if plugin.version == "" {
-				plugin.version = "latest"
-			}
-			var source string
-			if plugin.feed != "" {
-				source = "--feed-url=" + plugin.feed
-			} else {
-				source = "--url=" + plugin.url
-			}
-			return buildPorterCmd("plugin", "install", plugin.name, "--version", plugin.version, source).Run()
-		})
-	}
-
-	return errG.Wait()
-}
-
 func getMixins() error {
 	// TODO: move this to a shared target in porter
 
@@ -195,9 +165,9 @@ func getMixins() error {
 		feed    string
 		version string
 	}{
-		{name: "helm3", url: "https://github.com/carolynvs/porter-helm3/releases/download", version: "v0.1.15-8-g864f450"},
-		{name: "kubernetes", feed: "https://cdn.porter.sh/mixins/atom.xml", version: "latest"},
-		{name: "exec", feed: "https://cdn.porter.sh/mixins/atom.xml", version: "latest"},
+		{name: "helm3", feed: "https://mchorfa.github.io/porter-helm3/atom.xml", version: "v1.0.0"},
+		{name: "kubernetes", feed: "https://cdn.porter.sh/mixins/atom.xml", version: "v1.0.0"},
+		{name: "exec", feed: "https://cdn.porter.sh/mixins/atom.xml", version: "v1.0.2"},
 	}
 	var errG errgroup.Group
 	for _, mixin := range mixins {
@@ -235,9 +205,9 @@ func Publish() {
 func PublishBundle() {
 	mg.SerialDeps(PublishImages, BuildBundle)
 	meta := releases.LoadMetadata()
-	buildPorterCmd("publish", "--registry", Env.Registry, "-f=porter.yaml", "--tag", meta.Version).In("installer").Must().RunV()
+	buildPorterCmd("publish", "--registry", Env.Registry, "-f=porter.yaml", "--tag", meta.Version, "--force").In("installer").Must().RunV()
 
-	buildPorterCmd("publish", "--registry", Env.Registry, "-f=porter.yaml", "--tag", meta.Permalink, "--force").In("installer").Must().RunV()
+	buildPorterCmd("publish", "--registry", Env.Registry, "-f=porter.yaml", "--tag", meta.Permalink, "--force", "--force").In("installer").Must().RunV()
 }
 
 // Generate k8s manifests for the operator.
@@ -299,7 +269,7 @@ func UpdateTestfiles() {
 
 func TestOutline() {
 	must.Command("ginkgo", "-v", "-dryRun", "-tags=integration", "./tests/integration/...").
-		CollapseArgs().Env("ACK_GINKGO_DEPRECATIONS=1.16.5").RunV()
+		Env("ACK_GINKGO_DEPRECATIONS=1.16.5").RunV()
 }
 
 // Run integration tests against the test cluster.
@@ -363,7 +333,9 @@ func Deploy() {
 		buildPorterCmd("credentials", "apply", "hack/creds.yaml", "-n=operator").Must().RunV()
 	}
 	bundleRef := Env.BundlePrefix + meta.Version
-	buildPorterCmd("install", "operator", "-r", bundleRef, "-c=kind", "--force", "-n=operator").Must().RunV()
+	installCmd := buildPorterCmd("install", "operator", "-r", bundleRef, "-c=kind", "--force", "-n=operator").Must()
+	applyHackParameters(installCmd)
+	installCmd.RunV()
 }
 
 func isDeployed() bool {
@@ -431,7 +403,7 @@ func Bump(sample string) {
 
 	sampleFile := fmt.Sprintf("config/samples/%s.yaml", sample)
 
-	dataB, err := ioutil.ReadFile(sampleFile)
+	dataB, err := os.ReadFile(sampleFile)
 	mgx.Must(errors.Wrapf(err, "error reading installation definition %s", sampleFile))
 
 	updateRetry := fmt.Sprintf(`.metadata.annotations."porter.sh/retry" = "%s"`, time.Now().Format(time.RFC3339))
@@ -465,19 +437,78 @@ func SetupNamespace(name string) {
 	mg.Deps(EnsureTestCluster)
 	porterConfigFile := "./tests/integration/testdata/operator_porter_config.yaml"
 
-	// Only specify the parameter set we have the env vars set
-	// It would be neat if Porter could handle this for us
-	buildPorterCmd("parameters", "apply", "./hack/params.yaml", "-n=operator").RunV()
-	ps := ""
-	if os.Getenv("PORTER_AGENT_REPOSITORY") != "" && os.Getenv("PORTER_AGENT_VERSION") != "" {
-		ps = "-p=dev-build"
-	}
-
-	buildPorterCmd("invoke", "operator", "--action=configureNamespace", ps, "--param", "pullPolicy=Always", "--param", "namespace="+name, "--param", "porterConfig="+porterConfigFile, "-c", "kind", "-n=operator").
-		CollapseArgs().Must().RunV()
+	invokeCmd := buildPorterCmd("invoke", "operator", "--action=configureNamespace", "--param", "pullPolicy=Always", "--param", "namespace="+name, "--param", "porterConfig="+porterConfigFile, "-c", "kind", "-n=operator").Must()
+	applyHackParameters(invokeCmd)
+	invokeCmd.RunV()
 	kubectl("label", "namespace", name, "--overwrite=true", "porter.sh/devenv=true").Must().RunV()
 
 	setClusterNamespace(name)
+}
+
+// Apply custom paramter sets in the hack/ directory when we can detect that they apply
+func applyHackParameters(cmd shx.PreparedCommand) {
+	// Only specify the parameter set we have the env vars set to use a local developer build of the agent
+	agentRepo := os.Getenv("PORTER_AGENT_REPOSITORY")
+	agentVersion := os.Getenv("PORTER_AGENT_VERSION")
+	if agentRepo != "" && agentVersion != "" {
+		fmt.Printf("Using a custom porter agent image: %s:%s", agentRepo, agentVersion)
+		buildPorterCmd("parameters", "apply", "./hack/dev-build-params.yaml", "-n=operator").RunV()
+		cmd.Args("-p=dev-build")
+	}
+
+	// Only specify the parameter set when running on an arm machine
+	if runtime.GOARCH == "arm64" {
+
+		// Check if the user has specified a custom image instead of Carolyn's hack image
+		mongodbImage := "ghcr.io/carolynvs/mongodb-bitnami-compat:6.0.3-debian-11-r50@sha256:7397ffec8a5164deca5da0b52eb9f811acac04caaf1ecb215c2ef2ed33665191"
+		customMongodbImageEnvVar := "PORTER_MONGODB_IMAGE"
+		if customMongoImg, ok := os.LookupEnv(customMongodbImageEnvVar); ok {
+			mongodbImage = customMongoImg
+		}
+
+		ref, err := cnab.ParseOCIReference(mongodbImage)
+		if err != nil {
+			panic(fmt.Errorf("error parsing %s as an OCI reference: %w", customMongodbImageEnvVar, err))
+		}
+		if ref.IsRepositoryOnly() {
+			panic(fmt.Errorf("%s must contain a full OCI image reference including the tag and/or digest", customMongodbImageEnvVar))
+		}
+
+		mgx.Must(shx.Copy("./hack/arm-mongodb-vals.tmpl.yaml", "./hack/arm-mongodb-vals.yaml"))
+		EditYaml("./hack/arm-mongodb-vals.yaml", func(yq *porteryaml.Editor) error {
+			if err := yq.SetValue("image.registry", ref.Registry()); err != nil {
+				return err
+			}
+			if err := yq.SetValue("image.repository", strings.TrimPrefix(ref.Repository(), ref.Registry()+"/")); err != nil {
+				return err
+			}
+			if err := yq.SetValue("image.tag", ref.Tag()); err != nil {
+				return err
+			}
+			return yq.SetValue("image.digest", ref.Digest().String())
+		})
+
+		fmt.Println("Using a custom mongodb image:", mongodbImage)
+		buildPorterCmd("parameters", "apply", "./hack/arm-mongodb-params.yaml", "-n=operator").RunV()
+		cmd.Args("-p=arm-mongodb-hack")
+	}
+}
+
+// EditYaml applies a set of yq transformations to a file.
+func EditYaml(path string, transformations ...func(yq *porteryaml.Editor) error) error {
+	log.Println("Editing", path)
+	yq := porteryaml.NewEditor(portercontext.New())
+
+	if err := yq.ReadFile(path); err != nil {
+		return err
+	}
+
+	for _, transform := range transformations {
+		if err := transform(yq); err != nil {
+			return err
+		}
+	}
+	return yq.WriteFile(path)
 }
 
 // Remove the test cluster and registry.
@@ -573,7 +604,7 @@ func useCluster() bool {
 		}
 		os.Setenv("KUBECONFIG", currentKubeConfig)
 
-		err := ioutil.WriteFile(kubeconfig, []byte(contents), 0644)
+		err := os.WriteFile(kubeconfig, []byte(contents), 0644)
 		mgx.Must(errors.Wrapf(err, "error writing %s", kubeconfig))
 
 		setClusterNamespace(operatorNamespace)
@@ -645,7 +676,7 @@ func buildPorterCmd(args ...string) shx.PreparedCommand {
 
 func BuildLocalPorterAgent() {
 	mg.SerialDeps(porter.UseBinForPorterHome, ensurePorterAt)
-	mg.SerialDeps(getPlugins, getMixins)
+	mg.SerialDeps(getMixins)
 	porterRegistry := "ghcr.io/getporter"
 	buildImage := func(img string) error {
 		_, err := shx.Output("docker", "build", "-t", img,
@@ -666,7 +697,7 @@ func BuildLocalPorterAgent() {
 
 // generatedCodeFilter remove generated code files from coverage report
 func generatedCodeFilter(filename string) error {
-	fd, err := ioutil.ReadFile(filename)
+	fd, err := os.ReadFile(filename)
 	if err != nil {
 		return err
 	}
@@ -680,7 +711,7 @@ func generatedCodeFilter(filename string) error {
 	}
 
 	fd = []byte(strings.Join(lines, "\n"))
-	err = ioutil.WriteFile(filename, fd, 0600)
+	err = os.WriteFile(filename, fd, 0600)
 	if err != nil {
 		return err
 	}

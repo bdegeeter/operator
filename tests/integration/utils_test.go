@@ -14,7 +14,6 @@ import (
 	porterv1 "get.porter.sh/operator/api/v1"
 	"get.porter.sh/operator/controllers"
 	"github.com/carolynvs/magex/shx"
-	"github.com/mitchellh/mapstructure"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	"github.com/pkg/errors"
@@ -37,6 +36,7 @@ var resourceTypeMap = map[string]string{
 	"CredentialSet": "credentialsets",
 	"Installation":  "installations",
 	"AgentAction":   "agentactions",
+	"AgentConfig":   "agentconfigs",
 }
 
 var gvrVersion = "v1"
@@ -131,7 +131,7 @@ func waitForPorter(ctx context.Context, resource client.Object, expGeneration in
 				continue
 			}
 			if generation == observedGen {
-				conditions, err := getConditions(porterResource)
+				conditions, err := getConditions(resource)
 				// Conditions may not yet be set, try again
 				if err != nil {
 					continue
@@ -160,17 +160,14 @@ func getObservedGeneration(obj *unstructured.Unstructured) (int64, error) {
 	return 0, errors.New("Unable to find observed generation")
 }
 
-func getConditions(obj *unstructured.Unstructured) ([]metav1.Condition, error) {
-	conditions, found, err := unstructured.NestedSlice(obj.Object, "status", "conditions")
-	if err != nil {
-		return []metav1.Condition{}, err
+func getConditions(resource client.Object) ([]metav1.Condition, error) {
+	if r, ok := resource.(controllers.PorterResource); ok {
+		return r.GetStatus().Conditions, nil
 	}
-	if !found {
-		return []metav1.Condition{}, errors.New("Unable to find resource status")
+	if r, ok := resource.(*porterv1.AgentAction); ok {
+		return *r.GetConditions(), nil
 	}
-	c := []metav1.Condition{}
-	mapstructure.Decode(conditions, &c)
-	return c, nil
+	return []metav1.Condition{}, errors.New("Unable to find resource status")
 }
 
 func waitForResourceDeleted(ctx context.Context, resource client.Object) error {
@@ -286,7 +283,9 @@ func getAgentActionCmdOut(action *porterv1.AgentAction, aaOut string) string {
 	return strings.SplitAfterN(strings.Replace(aaOut, "\n", "", -1), strings.Join(action.Spec.Args, " "), 2)[1]
 }
 
-/* Fully execute an agent action and return the associated result of the command executed. For example an agent action
+/*
+	Fully execute an agent action and return the associated result of the command executed. For example an agent action
+
 that does "porter credentials list" will return just the result of the porter command from the job logs. This can be
 used to run porter commands inside the cluster to validate porter state
 */

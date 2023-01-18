@@ -24,13 +24,13 @@ The commands below use the v0.7.1 release, but there may be a more recent releas
 Check our [releases page](https://github.com/getporter/operator/releases) and use the most recent version number.
 
 ```
-porter credentials generate porterops -r ghcr.io/getporter/porter-operator:v0.7.1
+porter credentials generate porterops -r ghcr.io/getporter/porter-operator:v0.7.2
 ```
 
 Now that Porter knows which cluster to target, install the Operator with the following command:
 
 ```
-porter install porterops -c porterops -r ghcr.io/getporter/porter-operator:v0.7.1
+porter install porterops -c porterops -r ghcr.io/getporter/porter-operator:v0.7.2
 ```
 
 Before you use the operator, you need to configure a Kubernetes namespace with the necessary configuration.
@@ -299,6 +299,42 @@ data:
 Create the `porter-env` secret by running `kubectl apply -f azure_credentials.yaml`
 
 These environment variables will now be available in the Agent Action job that's created for any Installation created in the `quickstart` namespace
+
+## Private Bundle Registries
+
+Porter relies on .docker/config.json for authentication to private registries. The process is a bit
+different when running via the Operator. In order to access bundles in a private registry you'll need to add
+an imagePullSecret to the service account in the namespace of the `AgentConfig`. If the imagePullSecret
+is not added to the default service account `installationServiceAccount` must be added to the `AgentConfig`
+with the correct account.
+
+Currently the Operator only supports the first imagePullSecret in a service account(additional will be ignored).
+A single secret with authentication for multiple registries can achieved by 
+[creating a secret from a file](https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/#registry-secret-existing-credentials).
+
+## Install Plugins
+
+Create the `quickstart_agentconfig.yaml` with the following content:
+```yaml
+apiVersion: porter.sh/v1
+kind: AgentConfig
+metadata:
+  name: agentconfig-quickstart
+  namespace: quickstart
+spec:
+  plugins:
+    kubernetes:
+      version: v1.0.0
+      feedUrl: https://cdn.porter.sh/plugins/atom.xml
+```
+
+Create the `AgentConfig` custom resource by running `kubectl apply -f quickstart_agentconfig.yaml`
+
+The operator will use `porter plugins install` to install defined plugins. Any bundle actions that depend on configured plugins will wait to execute until plugins installation finishes. 
+
+If no plugins are required, this field is optional.
+
+🚨 WARNING: Currently, the operator can only install one plugin per AgentConfig. If more than one plugins are defined in the CRD, it will only install the first plugin in the config file and omit the rest. The plugins are sorted in alphabetical order.
 
 ## Next Steps
 

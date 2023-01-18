@@ -10,7 +10,7 @@ const (
 	//
 	// As we test out the operator with new versions of Porter, keep this value
 	// up-to-date so that the default version is guaranteed to work.
-	DefaultPorterAgentVersion = "v1.0.0-rc.1"
+	DefaultPorterAgentVersion = "v1.0.2"
 
 	// LabelJobType is a label applied to jobs created by the operator. It
 	// indicates the purpose of the job.
@@ -39,6 +39,8 @@ const (
 	// LabelManaged is a label applied to resources created by the Porter
 	// Operator.
 	LabelManaged = Prefix + "managed"
+
+	LabelPluginsHash = Prefix + "plugins-hash"
 
 	// LabelResourceKind is a label applied to resources created by the Porter
 	// Operator, representing the kind of owning resource. It is used to help the
@@ -89,4 +91,19 @@ const (
 	// VolumePorterWorkDirPath is the mount path of the volume that is used as the
 	// Porter's working directory.
 	VolumePorterWorkDirPath = "/porter-workdir"
+
+	// VolumeImgPullSecretName is the name of the volume that contains
+	// .docker/config.json file.
+	VolumeImgPullSecretName = "img-pull-secret"
+
+	// VolumeImagePullSecretPath is the mount path of the volume containing for docker
+	// auth for image pull secrets.
+	VolumeImgPullSecretPath = "/home/nonroot"
+	// VolumePorterSharedName is the name of the volume shared between the porter
+	// agent and the invocation image.
+	VolumePorterPluginsName = "porter-plugins"
+
+	// VolumePorterConfigPath is the mount path of the volume containing Porter's
+	// config file.
+	VolumePorterPluginsPath = "/app/.porter/plugins"
 )
