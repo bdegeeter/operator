@@ -357,16 +357,14 @@ func isDeployed() bool {
 
 // Push the operator image.
 func PublishImages() {
-	mg.Deps(BuildImages)
 	meta := releases.LoadMetadata()
 	img := Env.ManagerImagePrefix + meta.Version
 	imgPermalink := Env.ManagerImagePrefix + meta.Permalink
 
-	log.Println("Pushing", img)
-	must.RunV("docker", "push", img)
+	log.Printf("Multi-arch build and push of %s and %s\n", img, imgPermalink)
+	must.RunV("docker", "buildx", "create", "--use")
+	must.RunV("docker", "buildx", "bake", "-f", "docker-bake.json", "--push", "--set", "porter.tags="+img, "--set", "porter.tags="+imgPermalink, "porter")
 
-	log.Println("Pushing", imgPermalink)
-	must.RunV("docker", "push", imgPermalink)
 }
 
 func PublishLocalPorterAgent() {
