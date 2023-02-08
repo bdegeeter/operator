@@ -203,7 +203,7 @@ func Publish() {
 
 // Push the porter-operator bundle to a registry. Defaults to the local test registry.
 func PublishBundle() {
-	mg.SerialDeps(PublishMultiArchImages, BuildBundle)
+	mg.SerialDeps(PublishImages, BuildBundle)
 	meta := releases.LoadMetadata()
 	buildPorterCmd("publish", "--registry", Env.Registry, "-f=porter.yaml", "--tag", meta.Version, "--force").In("installer").Must().RunV()
 
