@@ -57,9 +57,10 @@ jobs:
         run: |
           if [[ "${GITHUB_REPOSITORY}" != "getporter/operator" ]]; then
           # If publishing from fork PORTER_OPERATOR_REGISTRY
-          # must be set as a CI variable and GHCR_USER and GHCR_TOKEN set
+          # must be set as a CI env variable and GHCR_USER and GHCR_TOKEN set
           # as secrets with permissions to publish images
           export PORTER_ENV=fork
+          export PORTER_OPERATOR_REGISTRY=${{ env.PORTER_OPERATOR_REGISTRY }}
           fi
           mage -v Publish
         env:
