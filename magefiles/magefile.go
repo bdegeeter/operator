@@ -470,8 +470,8 @@ func applyHackParameters(cmd shx.PreparedCommand) {
 	// Only specify the parameter set when running on an arm machine
 	if runtime.GOARCH == "arm64" {
 
-		// Check if the user has specified a custom image instead of Carolyn's hack image
-		mongodbImage := "ghcr.io/carolynvs/mongodb-bitnami-compat:6.0.3-debian-11-r50@sha256:7397ffec8a5164deca5da0b52eb9f811acac04caaf1ecb215c2ef2ed33665191"
+		// Check if the user has specified a custom image instead of zcube/bitnami-compat
+		mongodbImage := "zcube/bitnami-compat-mongodb:6.0.5-debian-11"
 		customMongodbImageEnvVar := "PORTER_MONGODB_IMAGE"
 		if customMongoImg, ok := os.LookupEnv(customMongodbImageEnvVar); ok {
 			mongodbImage = customMongoImg
